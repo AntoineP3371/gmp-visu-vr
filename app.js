@@ -383,6 +383,15 @@ function gererClicSelection(ray) {
 // ============================================================================
 //  REINITIALISATION (position/rotation globale ou par axe)
 // ============================================================================
+function resetTout() {
+  var c = cibleCourante(); if (!c || !c.userData.origine) return;
+  var avant = capturerMatricesMonde(objetsCiblesActuels());
+  c.position.copy(c.userData.origine.pos);
+  c.quaternion.copy(c.userData.origine.quat);
+  var apres = capturerMatricesMonde(objetsCiblesActuels());
+  enregistrerTransformSiChange(objetsCiblesActuels(), avant, apres);
+  majPanneau();
+}
 function resetPosition() {
   var c = cibleCourante(); if (!c || !c.userData.origine) return;
   var avant = capturerMatricesMonde(objetsCiblesActuels());
@@ -463,6 +472,31 @@ var modeZoom = false;
 var zoomDistDepart = 0, zoomEchelleDepart = 1, zoomAvant = null;
 var ECHELLE_MIN = 0.05, ECHELLE_MAX = 20;
 
+// Etiquette flottante "NN %" affichee EN DIRECT entre les 2 manettes pendant
+// le zoom (sprite = toujours face a la camera, canvas redessine chaque frame
+// puisque le pourcentage change en continu).
+var ecEchelle = document.createElement('canvas');
+ecEchelle.width = 256; ecEchelle.height = 96;
+var ectxEchelle = ecEchelle.getContext('2d');
+var texEchelle = new THREE.CanvasTexture(ecEchelle);
+var spriteEchelle = new THREE.Sprite(new THREE.SpriteMaterial({ map: texEchelle, depthTest: false, transparent: true }));
+spriteEchelle.scale.set(0.16, 0.06, 1);
+spriteEchelle.renderOrder = 999;
+spriteEchelle.visible = false;
+scene.add(spriteEchelle);
+
+function dessinerEchelleSprite() {
+  ectxEchelle.clearRect(0, 0, 256, 96);
+  ectxEchelle.fillStyle = 'rgba(20,20,20,0.85)';
+  rr(ectxEchelle, 2, 2, 252, 92, 16); ectxEchelle.fill();
+  ectxEchelle.strokeStyle = '#8fd6ff'; ectxEchelle.lineWidth = 3;
+  rr(ectxEchelle, 2, 2, 252, 92, 16); ectxEchelle.stroke();
+  ectxEchelle.fillStyle = '#8fd6ff'; ectxEchelle.font = 'bold 40px sans-serif';
+  ectxEchelle.textAlign = 'center'; ectxEchelle.textBaseline = 'middle';
+  ectxEchelle.fillText(Math.round(pourcentageEchelle()) + ' %', 128, 48);
+  texEchelle.needsUpdate = true;
+}
+
 function demarrerZoom() {
   modeZoom = true;
   var p0 = new THREE.Vector3(); controllers[0].getWorldPosition(p0);
@@ -470,17 +504,23 @@ function demarrerZoom() {
   zoomDistDepart = p0.distanceTo(p1);
   zoomEchelleDepart = pivot.scale.x;
   zoomAvant = pivot.scale.x;
+  spriteEchelle.visible = true;
+  dessinerEchelleSprite();
 }
 function majZoom() {
   var p0 = new THREE.Vector3(); controllers[0].getWorldPosition(p0);
   var p1 = new THREE.Vector3(); controllers[1].getWorldPosition(p1);
-  if (zoomDistDepart < 1e-4) return;
-  var facteur = p0.distanceTo(p1) / zoomDistDepart;
-  var nouvelle = Math.max(ECHELLE_MIN, Math.min(ECHELLE_MAX, zoomEchelleDepart * facteur));
-  pivot.scale.setScalar(nouvelle);
+  if (zoomDistDepart >= 1e-4) {
+    var facteur = p0.distanceTo(p1) / zoomDistDepart;
+    var nouvelle = Math.max(ECHELLE_MIN, Math.min(ECHELLE_MAX, zoomEchelleDepart * facteur));
+    pivot.scale.setScalar(nouvelle);
+  }
+  spriteEchelle.position.copy(p0).add(p1).multiplyScalar(0.5);
+  dessinerEchelleSprite();
 }
 function terminerZoom() {
   modeZoom = false;
+  spriteEchelle.visible = false;
   if (zoomAvant !== null && Math.abs(pivot.scale.x - zoomAvant) > 1e-6) {
     enregistrer({ type: 'echelle', avant: zoomAvant, apres: pivot.scale.x });
   }
@@ -748,40 +788,42 @@ function reinitialiserCouleurs() {
 //  Les zones sont declarees UNE SEULE FOIS et servent a la fois au dessin et
 //  a la detection du clic : impossible qu'elles se desynchronisent.
 // ============================================================================
-var PW = 512, PH = 400;
+var PW = 512, PH = 410;
 var PLANE_W = 0.46, PLANE_H = PLANE_W * PH / PW;
 
+// Note : le ciblage d'UNE piece se fait desormais par B+grip (voir plus bas),
+// plus par bouton de panneau - seuls MODELE ENTIER et GROUPE restent ici.
 var ZA = {
-  modele:  { x: 8,   y: 8,  w: 160, h: 32 },
-  piece:   { x: 176, y: 8,  w: 160, h: 32 },
-  groupe:  { x: 344, y: 8,  w: 160, h: 32 },
-  choisir: { x: 8,   y: 44, w: 496, h: 28 }
+  modele:  { x: 8,   y: 8,  w: 246, h: 32 },
+  groupe:  { x: 262, y: 8,  w: 242, h: 32 },
+  choisir: { x: 8,   y: 44, w: 496, h: 26 }
 };
 var ZT = {
-  tabLibre:     { x: 8,   y: 80, w: 160, h: 32 },
-  tabPrecision: { x: 176, y: 80, w: 160, h: 32 },
-  tabCouleur:   { x: 344, y: 80, w: 160, h: 32 }
+  tabLibre:     { x: 8,   y: 78, w: 160, h: 30 },
+  tabPrecision: { x: 176, y: 78, w: 160, h: 30 },
+  tabCouleur:   { x: 344, y: 78, w: 160, h: 30 }
 };
 var ZP = {
-  translater: { x: 8,   y: 120, w: 246, h: 46 },
-  tourner:    { x: 262, y: 120, w: 242, h: 46 },
-  reset0Pos:  { x: 8,   y: 172, w: 246, h: 38 },
-  reset0Rot:  { x: 262, y: 172, w: 242, h: 38 }
+  translater: { x: 8,   y: 116, w: 246, h: 42 },
+  tourner:    { x: 262, y: 116, w: 242, h: 42 },
+  reset0Pos:  { x: 8,   y: 162, w: 246, h: 34 },
+  reset0Rot:  { x: 262, y: 162, w: 242, h: 34 },
+  resetTout:  { x: 8,   y: 200, w: 496, h: 32 }
 };
 var ZC = {
-  auto:  { x: 8,   y: 212, w: 246, h: 42 },
-  reset: { x: 262, y: 212, w: 242, h: 42 }
+  auto:  { x: 8,   y: 202, w: 246, h: 38 },
+  reset: { x: 262, y: 202, w: 242, h: 38 }
 };
 var ZU = {
-  annuler: { x: 8,   y: 262, w: 246, h: 42 },
-  refaire: { x: 262, y: 262, w: 242, h: 42 }
+  annuler: { x: 8,   y: 284, w: 246, h: 40 },
+  refaire: { x: 262, y: 284, w: 242, h: 40 }
 };
 var ZB = {
-  replacer: { x: 8,   y: 312, w: 246, h: 46 },
-  quitter:  { x: 262, y: 312, w: 242, h: 46 }
+  replacer: { x: 8,   y: 330, w: 246, h: 44 },
+  quitter:  { x: 262, y: 330, w: 242, h: 44 }
 };
 function zoneCouleur(i) {
-  return { x: 8 + (i % 6) * 84, y: 120 + (i < 6 ? 0 : 44), w: 76, h: 40 };
+  return { x: 8 + (i % 6) * 84, y: 116 + (i < 6 ? 0 : 42), w: 76, h: 38 };
 }
 
 var pc  = document.createElement('canvas');
@@ -811,17 +853,17 @@ function dessinerPanneau() {
 
   // --- Cible ---
   ctx.font = 'bold 14px sans-serif';
-  bouton(ZA.modele, cibleType === CIBLE.MODELE ? '#2c5aa0' : '#242430', 'MODELE ENTIER', cibleType === CIBLE.MODELE);
-  bouton(ZA.piece,  cibleType === CIBLE.PIECE  ? '#2c5aa0' : '#242430', 'PIECE',         cibleType === CIBLE.PIECE);
-  bouton(ZA.groupe, cibleType === CIBLE.GROUPE ? '#2c5aa0' : '#242430', 'GROUPE',        cibleType === CIBLE.GROUPE);
+  bouton(ZA.modele, cibleType !== CIBLE.GROUPE ? '#2c5aa0' : '#242430', 'MODELE / PIECE', cibleType !== CIBLE.GROUPE);
+  bouton(ZA.groupe, cibleType === CIBLE.GROUPE ? '#2c5aa0' : '#242430', 'GROUPE',         cibleType === CIBLE.GROUPE);
 
   ctx.textAlign = 'center';
-  if (cibleType !== CIBLE.MODELE) {
+  if (cibleType === CIBLE.GROUPE) {
     ctx.font = 'bold 14px sans-serif';
     bouton(ZA.choisir, enChoixCible ? '#8e2b2b' : '#2c5aa0', enChoixCible ? 'TERMINER LA SELECTION' : 'CHOISIR...', enChoixCible);
   } else {
     ctx.fillStyle = '#666'; ctx.font = '12px sans-serif';
-    ctx.fillText('Main libre et precision agissent sur tout le modele', PW / 2, 62);
+    var txtCible = cibleType === CIBLE.PIECE ? 'Piece selectionnee (B+grip pour en choisir une autre)' : 'A+grip = modele entier   -   B+grip = une piece';
+    ctx.fillText(txtCible, PW / 2, 62);
   }
 
   // --- Onglets de manipulation ---
@@ -842,10 +884,9 @@ function dessinerPanneau() {
     ctx.font = 'bold 13px sans-serif';
     bouton(ZP.reset0Pos, '#444', '0 POSITION', false);
     bouton(ZP.reset0Rot, '#444', '0 ROTATION', false);
-    ctx.fillStyle = '#aaa'; ctx.font = '12px sans-serif';
-    ctx.fillText('Petits "0" sur les fleches/anneaux = axe par axe', PW / 2, 226);
-    ctx.fillStyle = '#8fd6ff';
-    ctx.fillText('Echelle : ' + Math.round(pourcentageEchelle()) + ' % du reel', PW / 2, 244);
+    bouton(ZP.resetTout, '#8e5a2b', 'TOUT REMETTRE A ZERO', false);
+    ctx.fillStyle = '#8fd6ff'; ctx.font = 'bold 13px sans-serif';
+    ctx.fillText('Echelle : ' + Math.round(pourcentageEchelle()) + ' % du reel', PW / 2, 250);
   } else if (mode === MODE.COULEUR) {
     for (var i = 0; i < PALETTE.length; i++) {
       var z = zoneCouleur(i);
@@ -882,9 +923,8 @@ function zoneTouchee(uv) {
   function dans(z) { return cx >= z.x && cx <= z.x + z.w && cy >= z.y && cy <= z.y + z.h; }
 
   if (dans(ZA.modele)) return 'cible-modele';
-  if (dans(ZA.piece))  return 'cible-piece';
   if (dans(ZA.groupe)) return 'cible-groupe';
-  if (cibleType !== CIBLE.MODELE && dans(ZA.choisir)) return 'choisir';
+  if (cibleType === CIBLE.GROUPE && dans(ZA.choisir)) return 'choisir';
 
   if (dans(ZT.tabLibre))     return 'tabLibre';
   if (dans(ZT.tabPrecision)) return 'tabPrecision';
@@ -900,6 +940,7 @@ function zoneTouchee(uv) {
     if (dans(ZP.tourner))    return 'tourner';
     if (dans(ZP.reset0Pos))  return 'reset0Pos';
     if (dans(ZP.reset0Rot))  return 'reset0Rot';
+    if (dans(ZP.resetTout))  return 'resetTout';
   } else if (mode === MODE.COULEUR) {
     if (dans(ZC.auto))  return 'auto';
     if (dans(ZC.reset)) return 'reset';
@@ -911,7 +952,6 @@ function zoneTouchee(uv) {
 function traiterClicPanneau(zone) {
   if (!zone) return;
   if (zone === 'cible-modele') { definirCibleType(CIBLE.MODELE); return; }
-  if (zone === 'cible-piece')  { definirCibleType(CIBLE.PIECE); return; }
   if (zone === 'cible-groupe') { definirCibleType(CIBLE.GROUPE); return; }
   if (zone === 'choisir')      { enChoixCible = !enChoixCible; majPanneau(); return; }
   if (zone === 'tabLibre')     { definirMode(MODE.LIBRE); return; }
@@ -921,6 +961,7 @@ function traiterClicPanneau(zone) {
   if (zone === 'tourner')      { definirMode(MODE.GIZMO_R); return; }
   if (zone === 'reset0Pos')    { resetPosition(); return; }
   if (zone === 'reset0Rot')    { resetRotation(); return; }
+  if (zone === 'resetTout')    { resetTout(); return; }
   if (zone === 'auto')         { colorierAutomatiquement(); return; }
   if (zone === 'reset')        { reinitialiserCouleurs(); return; }
   if (zone === 'annuler')      { annuler(); return; }
@@ -965,6 +1006,11 @@ function rayonDe(ctrl) {
   raycaster.ray.origin.setFromMatrixPosition(ctrl.matrixWorld);
   raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
   raycaster.far = 3;
+  // OBLIGATOIRE pour tester un clic sur un THREE.Sprite (les marqueurs "0") :
+  // sans ceci, Sprite.raycast() plante (raycaster.camera est null), ce qui
+  // interrompt TOUT intersectObjects() de la liste - y compris les vraies
+  // poignees de translation/rotation testees dans le meme appel.
+  raycaster.camera = camera;
   return raycaster;
 }
 
@@ -1015,6 +1061,31 @@ function gererSelectStart(idx, ctrl) {
   // MODE.LIBRE : rien au clic gachette, la saisie se fait au grip
 }
 
+// Recherche la piece de piecesMobiles la plus proche de posControleur (par
+// distance a sa sphere englobante), utilisee par B+grip. rayonMax = tolerance
+// de capture (pas de rayon laser ici, uniquement de la proximite, comme la
+// saisie main libre normale).
+function piecePlusProche(posControleur, rayonMax) {
+  var meilleure = null, meilleureDist = rayonMax;
+  piecesMobiles.forEach(function (p) {
+    var box = new THREE.Box3().setFromObject(p);
+    var sphere = new THREE.Sphere();
+    box.getBoundingSphere(sphere);
+    var d = Math.max(posControleur.distanceTo(sphere.center) - sphere.radius, 0);
+    if (d < meilleureDist) { meilleureDist = d; meilleure = p; }
+  });
+  return meilleure;
+}
+// Lit l'etat d'un bouton de la manette (A/X = 4, B/Y = 5 sur le mapping
+// standard WebXR "xr-standard" des manettes Quest) - WebXR n'a pas
+// d'evenement natif pour ces boutons, il faut lire le Gamepad a la demande.
+function boutonAppuye(ctrl, index) {
+  try {
+    var gp = ctrl.userData.src && ctrl.userData.src.gamepad;
+    return !!(gp && gp.buttons && gp.buttons[index] && gp.buttons[index].pressed);
+  } catch (e) { return false; }
+}
+
 controllers.forEach(function (ctrl, idx) {
   scene.add(ctrl);
   var geoL = new THREE.BufferGeometry().setFromPoints(
@@ -1022,6 +1093,8 @@ controllers.forEach(function (ctrl, idx) {
   var ligne = new THREE.Line(geoL, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7 }));
   ligne.scale.z = 1.5;
   ctrl.add(ligne);
+  ctrl.addEventListener('connected',    function (e) { ctrl.userData.src = e.data; });
+  ctrl.addEventListener('disconnected', function ()  { ctrl.userData.src = null; });
 
   ctrl.addEventListener('squeezestart', function () {
     if (!anchorPlaced) return;
@@ -1032,10 +1105,31 @@ controllers.forEach(function (ctrl, idx) {
       return;
     }
     if (mode !== MODE.LIBRE || grabIdx !== -1 || modeZoom) return;
-    var c = cibleCourante();
-    if (!c) return;
+
     var p = new THREE.Vector3();
     ctrl.getWorldPosition(p);
+
+    // A/X (bouton 4) = cible le modele entier. B/Y (bouton 5) = cible
+    // uniquement la piece la plus proche de la manette. Grip seul (sans
+    // bouton) = reprend la cible actuelle (modele, piece ou groupe deja
+    // choisi via le panneau), pour pouvoir la re-saisir sans rappuyer.
+    if (boutonAppuye(ctrl, 4)) {
+      enChoixCible = false;
+      definirCibleType(CIBLE.MODELE);
+    } else if (boutonAppuye(ctrl, 5)) {
+      var piece = piecePlusProche(p, 0.2);
+      if (piece) {
+        enChoixCible = false;
+        cibleType = CIBLE.PIECE;
+        selection = [piece];
+        surlignerSelection();
+        reconstruireCible();
+        majPanneau();
+      }
+    }
+
+    var c = cibleCourante();
+    if (!c) return;
     if (pointDeGrabProche(p)) {
       grabIdx = idx;
       grabAvant = capturerMatricesMonde(objetsCiblesActuels());
