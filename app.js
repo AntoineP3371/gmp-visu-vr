@@ -127,9 +127,12 @@ scene.add(preview);
 function replacer() {
   anchorPlaced = false;
   preview.visible = true;
-  panneau.visible = false;
+  roue.visible = false;
   desactiverSelectionAB();
   definirMode(MODE.LIBRE);
+  effacerMesure();
+  sortirModePhoto();
+  fermerApercuPhoto();
 }
 function quitterAR() {
   try {
@@ -278,6 +281,17 @@ function chargerModele(fichier) {
 
     pivot.updateMatrixWorld(true);
     capturerOrigine(pivot);
+
+    // Position/orientation d'origine de CHAQUE piece, exprimee dans le repere
+    // du pivot (et non de son parent direct, qui change a chaque selection) :
+    // c'est ce qui permet au RAZ GENERAL de remettre meme les pieces deplacees
+    // individuellement ou en groupe, meme apres plusieurs allers-retours de
+    // selection.
+    scene.updateMatrixWorld(true);
+    piecesMobiles.forEach(function (p) {
+      p.userData.matriceRelPivotOrigine = pivot.matrixWorld.clone().invert().multiply(p.matrixWorld);
+    });
+
     carPret = true;
     majPanneau();
   }, undefined, function (e) {
@@ -442,6 +456,27 @@ function resetAxeTranslation(lettre) {
   c.position[lettre] = c.userData.origine.pos[lettre];
   var apres = capturerMatricesMonde(objetsCiblesActuels());
   enregistrerTransformSiChange(objetsCiblesActuels(), avant, apres);
+  majPanneau();
+}
+// RAZ generale : remet le modele ENTIER a sa position/orientation d'origine,
+// y compris les pieces deplacees individuellement ou en groupe (contrairement
+// a resetTout(), qui ne touche que la cible actuellement selectionnee).
+function razGenerale() {
+  if (!racineModele) return;
+  var objets = [racineModele].concat(piecesMobiles);
+  var avant = capturerMatricesMonde(objets);
+
+  desactiverSelectionAB();
+  pivot.position.copy(pivot.userData.origine.pos);
+  pivot.quaternion.copy(pivot.userData.origine.quat);
+  scene.updateMatrixWorld(true);
+  piecesMobiles.forEach(function (p) {
+    var mondeCible = pivot.matrixWorld.clone().multiply(p.userData.matriceRelPivotOrigine);
+    definirMatriceMonde(p, mondeCible);
+  });
+
+  var apres = capturerMatricesMonde(objets);
+  enregistrerTransformSiChange(objets, avant, apres);
   majPanneau();
 }
 function resetAxeRotation(lettre) {
@@ -616,13 +651,16 @@ function perpendiculaire(axe) {
 // (bouton de reinitialisation), ou la valeur EN DIRECT (m / degres) pendant
 // qu'on fait glisser CET axe - chacun a son propre canvas puisqu'ils
 // n'affichent pas tous la meme chose en meme temps.
+// La case (rectangulaire, pas ronde) affiche la valeur EN PERMANENCE - donc
+// assez large pour un texte du genre "+0.123m" ou "-180.0°".
+var MV_W = 160, MV_H = 64;
 function creerMarqueurAxe() {
   var c = document.createElement('canvas');
-  c.width = 96; c.height = 96;
+  c.width = MV_W; c.height = MV_H;
   var cx = c.getContext('2d');
   var tex = new THREE.CanvasTexture(c);
   var s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
-  s.scale.set(0.04, 0.04, 0.04);
+  s.scale.set(0.07, 0.07 * MV_H / MV_W, 1);
   s.renderOrder = 999;
   s.userData.canvas = c; s.userData.ctx = cx; s.userData.tex = tex;
   dessinerMarqueurAxe(s, '0', false);
@@ -630,14 +668,14 @@ function creerMarqueurAxe() {
 }
 function dessinerMarqueurAxe(s, texte, actif) {
   var c = s.userData.canvas, cx = s.userData.ctx;
-  cx.clearRect(0, 0, 96, 96);
-  cx.beginPath(); cx.arc(48, 48, actif ? 46 : 43, 0, Math.PI * 2);
-  cx.fillStyle = actif ? 'rgba(70,55,10,0.94)' : 'rgba(30,30,30,0.9)'; cx.fill();
-  cx.strokeStyle = actif ? '#ffee00' : '#fff'; cx.lineWidth = actif ? 4 : 3; cx.stroke();
+  cx.clearRect(0, 0, MV_W, MV_H);
+  rr(cx, 3, 3, MV_W - 6, MV_H - 6, 14);
+  cx.fillStyle = actif ? 'rgba(70,55,10,0.94)' : 'rgba(20,20,20,0.88)'; cx.fill();
+  cx.strokeStyle = actif ? '#ffee00' : '#fff'; cx.lineWidth = actif ? 4 : 2; cx.stroke();
   cx.fillStyle = actif ? '#ffee00' : '#fff';
   cx.textAlign = 'center'; cx.textBaseline = 'middle';
-  cx.font = actif ? 'bold 18px sans-serif' : 'bold 34px sans-serif';
-  cx.fillText(texte, 48, 48);
+  cx.font = 'bold 26px sans-serif';
+  cx.fillText(texte, MV_W / 2, MV_H / 2 + 1);
   s.userData.tex.needsUpdate = true;
 }
 function texteAxeTranslation(lettre) {
@@ -655,6 +693,25 @@ function texteAxeRotation(lettre) {
   return (deg >= 0 ? '+' : '') + deg.toFixed(1) + '°';
 }
 
+// Petit bouton RAZ (texture statique partagee - le texte "RAZ" ne change
+// jamais, pas besoin d'un canvas par instance comme le marqueur de valeur).
+var rzc = document.createElement('canvas');
+rzc.width = 64; rzc.height = 64;
+var rzctx = rzc.getContext('2d');
+rzctx.beginPath(); rzctx.arc(32, 32, 29, 0, Math.PI * 2);
+rzctx.fillStyle = 'rgba(70,30,30,0.92)'; rzctx.fill();
+rzctx.strokeStyle = '#ff8888'; rzctx.lineWidth = 3; rzctx.stroke();
+rzctx.fillStyle = '#ff8888'; rzctx.font = 'bold 15px sans-serif';
+rzctx.textAlign = 'center'; rzctx.textBaseline = 'middle';
+rzctx.fillText('RAZ', 32, 34);
+var matBoutonRAZ = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(rzc), depthTest: false, transparent: true });
+function creerBoutonRAZ() {
+  var s = new THREE.Sprite(matBoutonRAZ);
+  s.scale.set(0.03, 0.03, 0.03);
+  s.renderOrder = 999;
+  return s;
+}
+
 // gizmoTranslate/gizmoRotate sont enfants de anchor (pas de pivot) : ils sont
 // repositionnes chaque frame sur la cible courante dans la boucle de rendu.
 var gizmoTranslate = new THREE.Group();
@@ -663,9 +720,12 @@ anchor.add(gizmoTranslate, gizmoRotate);
 gizmoTranslate.visible = false;
 gizmoRotate.visible    = false;
 
-var poignees = [];   // { mesh (sert au raycast), axe, type, axeLettre? }
+var poignees = [];        // { mesh (sert au raycast), axe, type, axeLettre? }
+var marqueursValeur = []; // { sprite, type: 'translate'|'rotate', axeLettre } - affichage seul
 
 AXES.forEach(function (a) {
+  var perp = perpendiculaire(a.dir);
+
   var fleche = creerFleche(a.couleur, 0.006);
   majFleche(fleche, new THREE.Vector3(), a.dir.clone().multiplyScalar(LONGUEUR_FLECHE));
   var halo = new THREE.Mesh(
@@ -677,10 +737,17 @@ AXES.forEach(function (a) {
   gizmoTranslate.add(fleche, halo);
   poignees.push({ mesh: halo, axe: a.dir.clone(), type: 'translate', axeLettre: a.nom });
 
-  var zeroT = creerMarqueurAxe();
-  zeroT.position.copy(a.dir).multiplyScalar(-0.045);
-  gizmoTranslate.add(zeroT);
-  poignees.push({ mesh: zeroT, axe: a.dir.clone(), type: 'zero-t', axeLettre: a.nom });
+  // La valeur reste affichee en permanence (pas seulement pendant le
+  // glissement) ; le bouton RAZ, lui, est une poignee cliquable a part.
+  var valeurT = creerMarqueurAxe();
+  valeurT.position.copy(a.dir).multiplyScalar(-0.045);
+  gizmoTranslate.add(valeurT);
+  marqueursValeur.push({ sprite: valeurT, type: 'translate', axeLettre: a.nom });
+
+  var razT = creerBoutonRAZ();
+  razT.position.copy(a.dir).multiplyScalar(-0.045).add(perp.clone().multiplyScalar(0.032));
+  gizmoTranslate.add(razT);
+  poignees.push({ mesh: razT, axe: a.dir.clone(), type: 'raz-t', axeLettre: a.nom });
 
   var anneau = new THREE.Mesh(
     new THREE.TorusGeometry(RAYON_ANNEAU, 0.006, 8, 32),
@@ -696,10 +763,16 @@ AXES.forEach(function (a) {
   gizmoRotate.add(anneau, haloAnneau);
   poignees.push({ mesh: haloAnneau, axe: a.dir.clone(), type: 'rotate', axeLettre: a.nom });
 
-  var zeroR = creerMarqueurAxe();
-  zeroR.position.copy(perpendiculaire(a.dir)).multiplyScalar(RAYON_ANNEAU);
-  gizmoRotate.add(zeroR);
-  poignees.push({ mesh: zeroR, axe: a.dir.clone(), type: 'zero-r', axeLettre: a.nom });
+  var valeurR = creerMarqueurAxe();
+  valeurR.position.copy(perp).multiplyScalar(RAYON_ANNEAU);
+  gizmoRotate.add(valeurR);
+  marqueursValeur.push({ sprite: valeurR, type: 'rotate', axeLettre: a.nom });
+
+  var perp2 = new THREE.Vector3().crossVectors(a.dir, perp).normalize();
+  var razR = creerBoutonRAZ();
+  razR.position.copy(perp2).multiplyScalar(RAYON_ANNEAU);
+  gizmoRotate.add(razR);
+  poignees.push({ mesh: razR, axe: a.dir.clone(), type: 'raz-r', axeLettre: a.nom });
 });
 
 // Deplace le pivot de la cible courante (et le gizmo, qui le suit puisqu'il
@@ -850,194 +923,324 @@ function reinitialiserCouleurs() {
 }
 
 // ============================================================================
-//  PANNEAU DE COMMANDE (canvas 2D -> texture)
-//  Les zones sont declarees UNE SEULE FOIS et servent a la fois au dessin et
-//  a la detection du clic : impossible qu'elles se desynchronisent.
-// ============================================================================
-var PW = 512, PH = 320;
-var PLANE_W = 0.46, PLANE_H = PLANE_W * PH / PW;
-
-// Le ciblage (modele entier / piece / groupe) se fait desormais par
-// A+gachette (choisir) et A+grip (deplacer) - plus de bouton de panneau pour
-// ca, cf le bloc CIBLE DE MANIPULATION plus haut.
-var ZT = {
-  tabLibre:     { x: 8,   y: 8, w: 160, h: 32 },
-  tabPrecision: { x: 176, y: 8, w: 160, h: 32 },
-  tabCouleur:   { x: 344, y: 8, w: 160, h: 32 }
-};
-var ZP = {
-  translater: { x: 8,   y: 48,  w: 246, h: 44 },
-  tourner:    { x: 262, y: 48,  w: 242, h: 44 },
-  reset0Pos:  { x: 8,   y: 96,  w: 246, h: 34 },
-  reset0Rot:  { x: 262, y: 96,  w: 242, h: 34 },
-  resetTout:  { x: 8,   y: 134, w: 496, h: 32 }
-};
-var ZC = {
-  auto:  { x: 8,   y: 132, w: 246, h: 38 },
-  reset: { x: 262, y: 132, w: 242, h: 38 }
-};
-var ZU = {
-  annuler: { x: 8,   y: 196, w: 246, h: 40 },
-  refaire: { x: 262, y: 196, w: 242, h: 40 }
-};
-var ZB = {
-  replacer: { x: 8,   y: 242, w: 246, h: 44 },
-  quitter:  { x: 262, y: 242, w: 242, h: 44 }
-};
-function zoneCouleur(i) {
-  return { x: 8 + (i % 6) * 84, y: 48 + (i < 6 ? 0 : 42), w: 76, h: 38 };
-}
-
-var pc  = document.createElement('canvas');
-pc.width = PW; pc.height = PH;
-var ctx = pc.getContext('2d');
-var tex = new THREE.CanvasTexture(pc);
-
-function bouton(z, fond, texte, actif, couleurTexte) {
-  ctx.fillStyle = fond;
-  rr(ctx, z.x, z.y, z.w, z.h, 10); ctx.fill();
-  if (actif) {
-    ctx.strokeStyle = '#ffee00'; ctx.lineWidth = 4;
-    rr(ctx, z.x + 2, z.y + 2, z.w - 4, z.h - 4, 9); ctx.stroke();
-  }
-  ctx.fillStyle = couleurTexte || '#fff';
-  ctx.textAlign = 'center';
-  ctx.fillText(texte, z.x + z.w / 2, z.y + z.h / 2 + 6);
-}
-
-var panneauSale = true;
-function majPanneau() { panneauSale = true; }
-
-function dessinerPanneau() {
-  panneauSale = false;
-  ctx.clearRect(0, 0, PW, PH);
-  ctx.fillStyle = 'rgba(20,20,20,0.94)'; rr(ctx, 0, 0, PW, PH, 18); ctx.fill();
-
-  // --- Onglets de manipulation ---
-  ctx.textAlign = 'center';
-  var enPrecision = (mode === MODE.GIZMO_T || mode === MODE.GIZMO_R);
-  ctx.font = 'bold 14px sans-serif';
-  bouton(ZT.tabLibre,     mode === MODE.LIBRE ? '#2c5aa0' : '#242430', 'MAIN LIBRE', mode === MODE.LIBRE);
-  bouton(ZT.tabPrecision, enPrecision           ? '#2c5aa0' : '#242430', 'PRECISION',  enPrecision);
-  bouton(ZT.tabCouleur,   mode === MODE.COULEUR ? '#2c5aa0' : '#242430', 'COULEUR',    mode === MODE.COULEUR);
-
-  if (mode === MODE.LIBRE) {
-    ctx.fillStyle = '#aaa'; ctx.font = '13px sans-serif';
-    ctx.fillText('Grip seul = tout le modele', PW / 2, 58);
-    ctx.fillText('A + gachette (sur une piece) = choisir 1 ou plusieurs pieces', PW / 2, 78);
-    ctx.fillText('A + grip = deplacer la selection - relacher A = deselectionne', PW / 2, 98);
-    ctx.fillText('Joystick (A tenu) = transparence de la selection', PW / 2, 118);
-    ctx.fillText('2 grips en meme temps = zoom', PW / 2, 138);
-    if (cibleActive()) {
-      ctx.fillStyle = '#ffee00';
-      ctx.fillText(selection.length + ' piece(s) selectionnee(s)', PW / 2, 160);
-    }
-  } else if (enPrecision) {
-    ctx.font = 'bold 15px sans-serif';
-    bouton(ZP.translater, mode === MODE.GIZMO_T ? '#2c5aa0' : '#333', 'TRANSLATER', mode === MODE.GIZMO_T);
-    bouton(ZP.tourner,    mode === MODE.GIZMO_R ? '#2c5aa0' : '#333', 'TOURNER',    mode === MODE.GIZMO_R);
-    ctx.font = 'bold 13px sans-serif';
-    bouton(ZP.reset0Pos, '#444', '0 POSITION', false);
-    bouton(ZP.reset0Rot, '#444', '0 ROTATION', false);
-    bouton(ZP.resetTout, '#8e5a2b', 'TOUT REMETTRE A ZERO', false);
-    ctx.fillStyle = '#8fd6ff'; ctx.font = 'bold 13px sans-serif';
-    ctx.fillText('Echelle : ' + Math.round(pourcentageEchelle()) + ' % du reel', PW / 2, 250);
-  } else if (mode === MODE.COULEUR) {
-    for (var i = 0; i < PALETTE.length; i++) {
-      var z = zoneCouleur(i);
-      ctx.fillStyle = hex(PALETTE[i]); rr(ctx, z.x, z.y, z.w, z.h, 8); ctx.fill();
-      ctx.strokeStyle = (i === couleurIdx) ? '#ffee00' : '#666';
-      ctx.lineWidth = (i === couleurIdx) ? 5 : 1;
-      rr(ctx, z.x, z.y, z.w, z.h, 8); ctx.stroke();
-    }
-    ctx.font = 'bold 13px sans-serif';
-    bouton(ZC.auto,  '#444', 'COLORIER AUTO', false);
-    bouton(ZC.reset, '#444', 'REINITIALISER', false);
-  }
-
-  // --- Annuler / Refaire ---
-  ctx.font = 'bold 15px sans-serif';
-  bouton(ZU.annuler, historique.length ? '#444' : '#262626', 'ANNULER', false, historique.length ? '#fff' : '#666');
-  bouton(ZU.refaire, refaire.length    ? '#444' : '#262626', 'REFAIRE', false, refaire.length    ? '#fff' : '#666');
-
-  // --- Toujours visibles ---
-  ctx.font = 'bold 16px sans-serif';
-  bouton(ZB.replacer, '#2c5aa0', 'REPLACER SUR LA TABLE', false);
-  bouton(ZB.quitter,  '#8e2b2b', 'QUITTER', false);
-
-  ctx.fillStyle = '#666'; ctx.font = '11px sans-serif';
-  ctx.fillText(nomModeleCourant, PW / 2, PH - 10);
-
-  tex.needsUpdate = true;
-}
-
-function zoneTouchee(uv) {
-  var cx = uv.x * PW;
-  var cy = (1 - uv.y) * PH;
-  function dans(z) { return cx >= z.x && cx <= z.x + z.w && cy >= z.y && cy <= z.y + z.h; }
-
-  if (dans(ZT.tabLibre))     return 'tabLibre';
-  if (dans(ZT.tabPrecision)) return 'tabPrecision';
-  if (dans(ZT.tabCouleur))   return 'tabCouleur';
-
-  if (dans(ZU.annuler))  return 'annuler';
-  if (dans(ZU.refaire))  return 'refaire';
-  if (dans(ZB.replacer)) return 'replacer';
-  if (dans(ZB.quitter))  return 'quitter';
-
-  if (mode === MODE.GIZMO_T || mode === MODE.GIZMO_R) {
-    if (dans(ZP.translater)) return 'translater';
-    if (dans(ZP.tourner))    return 'tourner';
-    if (dans(ZP.reset0Pos))  return 'reset0Pos';
-    if (dans(ZP.reset0Rot))  return 'reset0Rot';
-    if (dans(ZP.resetTout))  return 'resetTout';
-  } else if (mode === MODE.COULEUR) {
-    if (dans(ZC.auto))  return 'auto';
-    if (dans(ZC.reset)) return 'reset';
-    for (var i = 0; i < PALETTE.length; i++) { if (dans(zoneCouleur(i))) return 'couleur' + i; }
-  }
-  return null;
-}
-
-function traiterClicPanneau(zone) {
-  if (!zone) return;
-  if (zone === 'tabLibre')     { definirMode(MODE.LIBRE); return; }
-  if (zone === 'tabPrecision') { definirMode(MODE.GIZMO_T); return; }
-  if (zone === 'tabCouleur')   { definirMode(MODE.COULEUR); return; }
-  if (zone === 'translater')   { definirMode(MODE.GIZMO_T); return; }
-  if (zone === 'tourner')      { definirMode(MODE.GIZMO_R); return; }
-  if (zone === 'reset0Pos')    { resetPosition(); return; }
-  if (zone === 'reset0Rot')    { resetRotation(); return; }
-  if (zone === 'resetTout')    { resetTout(); return; }
-  if (zone === 'auto')         { colorierAutomatiquement(); return; }
-  if (zone === 'reset')        { reinitialiserCouleurs(); return; }
-  if (zone === 'annuler')      { annuler(); return; }
-  if (zone === 'refaire')      { retablir(); return; }
-  if (zone === 'replacer')     { replacer(); return; }
-  if (zone === 'quitter')      { quitterAR(); return; }
-  if (zone.indexOf('couleur') === 0) {
-    couleurIdx = parseInt(zone.slice(7), 10);
-    majPanneau();
-  }
-}
-
-var panneau = new THREE.Mesh(
-  new THREE.PlaneGeometry(PLANE_W, PLANE_H),
-  new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide })
-);
-panneau.position.set(0, 0.5, 0);
-panneau.visible = false;
-anchor.add(panneau);
-
-// ============================================================================
 //  MODE (comment on manipule la cible courante)
 // ============================================================================
-var MODE = { LIBRE: 'libre', GIZMO_T: 'gizmo-t', GIZMO_R: 'gizmo-r', COULEUR: 'couleur' };
+var MODE = { LIBRE: 'libre', GIZMO_T: 'gizmo-t', GIZMO_R: 'gizmo-r', COULEUR: 'couleur', MESURE: 'mesure' };
 var mode = MODE.LIBRE;
 
 function definirMode(m) {
   mode = m;
   dragEtat = null;
+  majPanneau();
+}
+
+// ============================================================================
+//  MESURES : gachette sur un 1er point, puis un 2eme -> ligne + distance
+//  REELLE (pas la distance affichee, qui depend du zoom courant).
+// ============================================================================
+var mesurePoints = [];
+var mesurePointMarkers = [];
+var mesureLigne = null;
+var mesureLabel = null;
+
+function effacerMesure() {
+  mesurePointMarkers.forEach(function (m) { scene.remove(m); });
+  mesurePointMarkers = [];
+  if (mesureLigne) { scene.remove(mesureLigne); mesureLigne.geometry.dispose(); mesureLigne = null; }
+  if (mesureLabel) { scene.remove(mesureLabel); mesureLabel = null; }
+  mesurePoints = [];
+}
+function afficherMesure() {
+  var p0 = mesurePoints[0], p1 = mesurePoints[1];
+  var geo = new THREE.BufferGeometry().setFromPoints([p0, p1]);
+  mesureLigne = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffee00, depthTest: false }));
+  mesureLigne.renderOrder = 1400;
+  scene.add(mesureLigne);
+
+  // Distance REELLE (mm), independante du zoom d'affichage courant : cf
+  // pourcentageEchelle(), meme logique de conversion.
+  var distMonde   = p0.distanceTo(p1);
+  var distReelleMm = (distMonde / (echelleInitiale * pivot.scale.x)) * 1000;
+
+  var mc = document.createElement('canvas'); mc.width = 220; mc.height = 76;
+  var mctx = mc.getContext('2d');
+  rr(mctx, 2, 2, 216, 72, 14); mctx.fillStyle = 'rgba(20,20,20,0.92)'; mctx.fill();
+  rr(mctx, 2, 2, 216, 72, 14); mctx.strokeStyle = '#ffee00'; mctx.lineWidth = 3; mctx.stroke();
+  mctx.fillStyle = '#ffee00'; mctx.font = 'bold 30px sans-serif';
+  mctx.textAlign = 'center'; mctx.textBaseline = 'middle';
+  mctx.fillText(distReelleMm.toFixed(1) + ' mm', 110, 39);
+  var texM = new THREE.CanvasTexture(mc);
+  mesureLabel = new THREE.Sprite(new THREE.SpriteMaterial({ map: texM, depthTest: false, transparent: true }));
+  mesureLabel.scale.set(0.1, 0.1 * 76 / 220, 1);
+  mesureLabel.position.copy(p0).add(p1).multiplyScalar(0.5);
+  mesureLabel.renderOrder = 1401;
+  scene.add(mesureLabel);
+}
+function gererClicMesure(inter) {
+  if (mesurePoints.length >= 2) effacerMesure();
+  var pt = inter.point.clone();
+  mesurePoints.push(pt);
+  var marqueur = new THREE.Mesh(
+    new THREE.SphereGeometry(0.006, 10, 10),
+    new THREE.MeshBasicMaterial({ color: 0xffee00, depthTest: false })
+  );
+  marqueur.position.copy(pt);
+  marqueur.renderOrder = 1399;
+  scene.add(marqueur);
+  mesurePointMarkers.push(marqueur);
+  if (mesurePoints.length === 2) afficherMesure();
+}
+
+// ============================================================================
+//  CAPTURE D'AFFICHAGE : "Cadre" (vise et prend une photo) + "Fond" (ce qui
+//  apparait derriere le modele sur la photo).
+//  ATTENTION - limite technique connue (deja rencontree sur VR CEC) : WebXR
+//  ne donne PAS acces aux pixels reels du passthrough a une page web (raison
+//  de securite/vie privee, pas un choix d'implementation ici). "Realite
+//  augmentee" utilise donc un fond transparent en secours (le plus proche
+//  possible du reel avec les moyens disponibles), PAS le vrai flux camera.
+// ============================================================================
+var fondCapture = 'ar';  // 'ar' (transparent) ou 'vr' (bleu GMP)
+var COULEUR_FOND_VR = 0x2f8fd6;
+
+var modePhoto = false;
+var cadrePhoto = new THREE.LineLoop(
+  new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(-0.06, -0.045, 0), new THREE.Vector3(0.06, -0.045, 0),
+    new THREE.Vector3(0.06, 0.045, 0),   new THREE.Vector3(-0.06, 0.045, 0)
+  ]),
+  new THREE.LineBasicMaterial({ color: 0xffee00, depthTest: false })
+);
+cadrePhoto.renderOrder = 1300;
+cadrePhoto.visible = false;
+
+var camPhoto = new THREE.PerspectiveCamera(60, 4 / 3, 0.01, 20);
+var previewPhoto = null;
+
+function entrerModePhoto() { modePhoto = true; cadrePhoto.visible = true; }
+function sortirModePhoto() { modePhoto = false; cadrePhoto.visible = false; }
+
+function fermerApercuPhoto() {
+  if (!previewPhoto) return;
+  anchor.remove(previewPhoto);
+  previewPhoto.material.map.dispose();
+  previewPhoto.material.dispose();
+  previewPhoto = null;
+}
+function afficherApercuPhoto(cv) {
+  fermerApercuPhoto();
+  var texP = new THREE.CanvasTexture(cv);
+  previewPhoto = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.3, 0.3 * cv.height / cv.width),
+    new THREE.MeshBasicMaterial({ map: texP, transparent: true, depthTest: false })
+  );
+  previewPhoto.position.set(0, 0.65, 0);
+  previewPhoto.renderOrder = 1500;
+  anchor.add(previewPhoto);
+}
+
+// Capture hors-ecran a la pose de tete courante (camera est deja synchronisee
+// sur la tete par Three.js pendant une session XR active). Meme technique que
+// VR CEC/peinture.js : rendu dans une cible hors ecran, renderer.xr.enabled
+// mis a false le temps du rendu (sinon le moteur substitue la camera casque).
+function capturerPhoto() {
+  if (!carPret) { sortirModePhoto(); return; }
+  var L = 512, H = 384;
+  camPhoto.aspect = L / H;
+  camPhoto.position.copy(camera.position);
+  camPhoto.quaternion.copy(camera.quaternion);
+  camPhoto.updateProjectionMatrix();
+  camPhoto.updateMatrixWorld(true);
+
+  var visRoue = roue.visible, visGT = gizmoTranslate.visible, visGR = gizmoRotate.visible;
+  var visCadre = cadrePhoto.visible, visMarq = marqueursValeur.map(function (m) { return m.sprite.visible; });
+  roue.visible = false; gizmoTranslate.visible = false; gizmoRotate.visible = false; cadrePhoto.visible = false;
+
+  var rt = new THREE.WebGLRenderTarget(L, H);
+  var xrEtait = renderer.xr.enabled;
+  var couleurAvant = new THREE.Color(); renderer.getClearColor(couleurAvant);
+  var alphaAvant = renderer.getClearAlpha();
+
+  renderer.xr.enabled = false;
+  renderer.setRenderTarget(rt);
+  if (fondCapture === 'vr') renderer.setClearColor(COULEUR_FOND_VR, 1);
+  else renderer.setClearColor(0x000000, 0);
+  renderer.clear();
+  renderer.render(scene, camPhoto);
+  renderer.setRenderTarget(null);
+  renderer.setClearColor(couleurAvant, alphaAvant);
+  renderer.xr.enabled = xrEtait;
+
+  roue.visible = visRoue; gizmoTranslate.visible = visGT; gizmoRotate.visible = visGR; cadrePhoto.visible = visCadre;
+
+  var buf = new Uint8Array(L * H * 4);
+  renderer.readRenderTargetPixels(rt, 0, 0, L, H, buf);
+  rt.dispose();
+
+  var cv = document.createElement('canvas'); cv.width = L; cv.height = H;
+  var c2 = cv.getContext('2d');
+  var img = c2.createImageData(L, H);
+  for (var y = 0; y < H; y++) {
+    var src = (H - 1 - y) * L * 4;
+    img.data.set(buf.subarray(src, src + L * 4), y * L * 4);
+  }
+  c2.putImageData(img, 0, 0);
+  afficherApercuPhoto(cv);
+  sortirModePhoto();
+}
+
+// ============================================================================
+//  MENU RADIAL - disque attache a la main gauche par defaut (deplacable sur
+//  l'autre main par un clic de joystick), pointe et valide avec la gachette
+//  de l'AUTRE manette. Remplace le panneau plat des versions precedentes.
+//  Arborescence figee ici, une seule fois (dessin ET clic la relisent).
+// ============================================================================
+var MENU_RACINE = [
+  { label: 'Couleurs', sub: [
+      { label: 'Automatique', action: colorierAutomatiquement },
+      { label: 'Manuel', action: function () { definirMode(MODE.COULEUR); }, sub: [
+          { label: 'Palette de couleurs', couleurs: true }
+      ] },
+      { label: 'RAZ', action: reinitialiserCouleurs }
+  ] },
+  { label: 'Deplacements', sub: [
+      { label: 'Precis', sub: [
+          { label: 'Translation', action: function () { definirMode(MODE.GIZMO_T); } },
+          { label: 'Rotation',    action: function () { definirMode(MODE.GIZMO_R); } }
+      ] },
+      { label: 'RAZ generale', action: razGenerale }
+  ] },
+  { label: 'Mesures', action: function () { definirMode(MODE.MESURE); } },
+  { label: 'Annuler / Refaire / Quitter / Remettre', sub: [
+      { label: 'Annuler', action: annuler },
+      { label: 'Refaire', action: retablir },
+      { label: 'Quitter', action: quitterAR },
+      { label: 'Remettre sur la table', action: replacer }
+  ] },
+  { label: "Capture d'affichage", sub: [
+      { label: 'Cadre', action: entrerModePhoto },
+      { label: 'Fond', sub: [
+          { label: 'Realite virtuelle',  action: function () { fondCapture = 'vr'; } },
+          { label: 'Realite augmentee',  action: function () { fondCapture = 'ar'; } }
+      ] }
+  ] }
+];
+
+var roueStack = [];    // navigation (drill-down) : pile des noeuds "sub" ouverts
+var menuCtrlIdx = 0;   // manette qui porte le menu - main gauche par defaut
+var summonPrev  = [false, false];
+
+var RCV = 512, RHUB = 84, RRING = 156, RNODE = 68;
+var rc = document.createElement('canvas'); rc.width = RCV; rc.height = RCV;
+var rctx = rc.getContext('2d');
+var rtex = new THREE.CanvasTexture(rc);
+var roue = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.22, 0.22),
+  new THREE.MeshBasicMaterial({ map: rtex, transparent: true, depthTest: false, side: THREE.DoubleSide })
+);
+roue.renderOrder = 1200;
+roue.visible = false;
+
+var panneauSale = true;      // nom garde pour tous les appels existants ;
+function majPanneau() { panneauSale = true; }   // marque desormais la ROUE a redessiner
+
+var _palRoueNodes = null;
+function noeudsRoue() {
+  var v = roueStack.length ? roueStack[roueStack.length - 1] : null;
+  if (v && v.couleurs) {
+    if (!_palRoueNodes) _palRoueNodes = PALETTE.map(function (couleur, i) { return { couleur: couleur, idx: i }; });
+    return _palRoueNodes;
+  }
+  return v ? v.sub : MENU_RACINE;
+}
+function centresRoue(list) {
+  var n = list.length, out = [], c = RCV / 2;
+  for (var i = 0; i < n; i++) {
+    var ang = -Math.PI / 2 + i * (2 * Math.PI / n);
+    out.push({ node: list[i], x: c + Math.cos(ang) * RRING, y: c + Math.sin(ang) * RRING });
+  }
+  return out;
+}
+function estActifRoue(node) {
+  switch (node.label) {
+    case 'Translation':          return mode === MODE.GIZMO_T;
+    case 'Rotation':              return mode === MODE.GIZMO_R;
+    case 'Manuel':                 return mode === MODE.COULEUR;
+    case 'Mesures':                 return mode === MODE.MESURE;
+    case 'Realite virtuelle':        return fondCapture === 'vr';
+    case 'Realite augmentee':         return fondCapture === 'ar';
+    default: return false;
+  }
+}
+function cerclePlein(x, y, r) { rctx.beginPath(); rctx.arc(x, y, r, 0, Math.PI * 2); rctx.closePath(); }
+
+function dessinerRoue() {
+  panneauSale = false;
+  var c = RCV / 2;
+  rctx.clearRect(0, 0, RCV, RCV);
+  rctx.fillStyle = 'rgba(16,20,26,0.92)';
+  cerclePlein(c, c, RRING + RNODE / 2 + 14); rctx.fill();
+  rctx.strokeStyle = '#2f8fd6'; rctx.lineWidth = 3;
+  cerclePlein(c, c, RRING + RNODE / 2 + 14); rctx.stroke();
+
+  var list = noeudsRoue();
+  centresRoue(list).forEach(function (p) {
+    if (p.node.couleur !== undefined) {
+      rctx.fillStyle = hex(p.node.couleur);
+      cerclePlein(p.x, p.y, RNODE / 2); rctx.fill();
+      rctx.strokeStyle = (p.node.idx === couleurIdx) ? '#ffee00' : '#3a4553';
+      rctx.lineWidth = (p.node.idx === couleurIdx) ? 5 : 2;
+      cerclePlein(p.x, p.y, RNODE / 2); rctx.stroke();
+      return;
+    }
+    var actif = estActifRoue(p.node);
+    rctx.fillStyle = actif ? '#2c5aa0' : '#242c37';
+    cerclePlein(p.x, p.y, RNODE / 2); rctx.fill();
+    rctx.strokeStyle = actif ? '#ffee00' : '#3a4553';
+    rctx.lineWidth = actif ? 5 : 2;
+    cerclePlein(p.x, p.y, RNODE / 2); rctx.stroke();
+    rctx.fillStyle = '#fff'; rctx.textAlign = 'center';
+    var mots = p.node.label.split(' ');
+    if (mots.length > 1 || p.node.label.length > 9) {
+      rctx.font = 'bold 10px sans-serif';
+      rctx.fillText(mots[0], p.x, p.y - 3);
+      if (mots[1]) rctx.fillText(mots.slice(1).join(' ').slice(0, 12), p.x, p.y + 11);
+    } else {
+      rctx.font = 'bold 13px sans-serif';
+      rctx.fillText(p.node.label, p.x, p.y + 4);
+    }
+  });
+
+  cerclePlein(c, c, RHUB);
+  rctx.fillStyle = 'rgba(28,34,44,0.96)'; rctx.fill();
+  rctx.strokeStyle = '#2f8fd6'; rctx.lineWidth = 2; cerclePlein(c, c, RHUB); rctx.stroke();
+  rctx.fillStyle = '#fff'; rctx.font = 'bold 13px sans-serif'; rctx.textAlign = 'center';
+  rctx.fillText(roueStack.length ? '< RETOUR' : 'MENU', c, c + 5);
+
+  rtex.needsUpdate = true;
+}
+
+function zoneRoue(uv) {
+  var c = RCV / 2, cx = uv.x * RCV, cy = (1 - uv.y) * RCV;
+  if (Math.hypot(cx - c, cy - c) < RHUB) return 'back';
+  var best = null, bd = 1e9;
+  centresRoue(noeudsRoue()).forEach(function (p) {
+    var d = Math.hypot(cx - p.x, cy - p.y);
+    if (d < bd) { bd = d; best = p; }
+  });
+  return (best && bd < RNODE * 0.9) ? best.node : null;
+}
+
+function traiterClicRoue(zone) {
+  if (!zone) return;
+  if (zone === 'back') { roueStack.pop(); majPanneau(); return; }
+  if (zone.couleur !== undefined) { couleurIdx = zone.idx; majPanneau(); return; }
+  if (zone.action) zone.action();
+  if (zone.sub) {
+    roueStack.push(zone);
+  } else {
+    roueStack = [];   // action terminale : revient a la racine du menu (reste visible)
+  }
   majPanneau();
 }
 
@@ -1072,11 +1275,20 @@ function gererSelectStart(idx, ctrl) {
 
   var ray = rayonDe(ctrl);
 
-  var hitsPanneau = ray.intersectObject(panneau, false);
-  if (hitsPanneau.length && hitsPanneau[0].uv) {
-    traiterClicPanneau(zoneTouchee(hitsPanneau[0].uv));
-    return;
+  if (previewPhoto) {
+    var hitsApercu = ray.intersectObject(previewPhoto, false);
+    if (hitsApercu.length) { fermerApercuPhoto(); return; }
   }
+
+  if (roue.visible) {
+    var hitsRoue = ray.intersectObject(roue, false);
+    if (hitsRoue.length && hitsRoue[0].uv) {
+      traiterClicRoue(zoneRoue(hitsRoue[0].uv));
+      return;
+    }
+  }
+
+  if (modePhoto) { capturerPhoto(); return; }
 
   // A tenu + gachette = (de)selectionner une piece, prioritaire sur tout le
   // reste (gizmo, couleur...).
@@ -1084,13 +1296,13 @@ function gererSelectStart(idx, ctrl) {
 
   if (mode === MODE.GIZMO_T || mode === MODE.GIZMO_R) {
     var typeActif = (mode === MODE.GIZMO_T) ? 'translate' : 'rotate';
-    var typeZero  = (mode === MODE.GIZMO_T) ? 'zero-t' : 'zero-r';
-    var poigneesActives = poignees.filter(function (pg) { return pg.type === typeActif || pg.type === typeZero; });
+    var typeRAZ   = (mode === MODE.GIZMO_T) ? 'raz-t' : 'raz-r';
+    var poigneesActives = poignees.filter(function (pg) { return pg.type === typeActif || pg.type === typeRAZ; });
     var hitsPoignee = ray.intersectObjects(poigneesActives.map(function (pg) { return pg.mesh; }), false);
     if (hitsPoignee.length) {
       var poignee = poigneesActives.filter(function (pg) { return pg.mesh === hitsPoignee[0].object; })[0];
-      if (poignee.type === 'zero-t') { resetAxeTranslation(poignee.axeLettre); return; }
-      if (poignee.type === 'zero-r') { resetAxeRotation(poignee.axeLettre); return; }
+      if (poignee.type === 'raz-t') { resetAxeTranslation(poignee.axeLettre); return; }
+      if (poignee.type === 'raz-r') { resetAxeRotation(poignee.axeLettre); return; }
       if (mode === MODE.GIZMO_T) demarrerDragTranslate(idx, poignee);
       else demarrerDragRotate(idx, poignee);
       return;
@@ -1107,6 +1319,12 @@ function gererSelectStart(idx, ctrl) {
     if (hitsModele2.length) remplirPiece(hitsModele2[0]);
     return;
   }
+
+  if (mode === MODE.MESURE && pieces.length) {
+    var hitsMesure = ray.intersectObjects(pieces, false);
+    if (hitsMesure.length) gererClicMesure(hitsMesure[0]);
+    return;
+  }
   // MODE.LIBRE : rien au clic gachette, la saisie se fait au grip
 }
 
@@ -1118,6 +1336,24 @@ function boutonAppuye(ctrl, index) {
     var gp = ctrl.userData.src && ctrl.userData.src.gamepad;
     return !!(gp && gp.buttons && gp.buttons[index] && gp.buttons[index].pressed);
   } catch (e) { return false; }
+}
+
+// Le menu est attache a la main gauche par defaut ; un clic de joystick
+// (bouton 3, meme mapping que VR CEC/peinture.js) sur l'AUTRE manette le
+// deplace dessus - pratique pour les gauchers ou selon la tache en cours.
+function pollAppelRoue() {
+  controllers.forEach(function (ctrl, i) {
+    var pressed = boutonAppuye(ctrl, 3);
+    if (pressed && !summonPrev[i] && menuCtrlIdx !== i) {
+      menuCtrlIdx = i;
+      ctrl.add(roue);
+      roue.position.set(0, 0.06, -0.04);
+      roue.rotation.x = -0.5;
+      roueStack = [];
+      majPanneau();
+    }
+    summonPrev[i] = pressed;
+  });
 }
 
 // Laser rouge de presentation : visible tant que la gachette est tenue,
@@ -1160,7 +1396,24 @@ controllers.forEach(function (ctrl, idx) {
   scene.add(pointeurLaser);
   ctrl.userData.pointeurLaser = pointeurLaser;
 
-  ctrl.addEventListener('connected',    function (e) { ctrl.userData.src = e.data; });
+  // Le menu est attache par defaut a controllers[0] (fallback en attendant
+  // de connaitre la vraie latéralité), puis recale sur la VRAIE main gauche
+  // des que WebXR la signale (handedness n'est connu qu'a la connexion).
+  if (idx === 0) { ctrl.add(roue); roue.position.set(0, 0.06, -0.04); roue.rotation.x = -0.5; }
+  if (idx === 1) { ctrl.add(cadrePhoto); cadrePhoto.position.set(0, 0, -0.16); }
+
+  ctrl.addEventListener('connected', function (e) {
+    ctrl.userData.src = e.data;
+    if (e.data.handedness === 'left' && menuCtrlIdx !== idx) {
+      menuCtrlIdx = idx;
+      ctrl.add(roue);
+      roue.position.set(0, 0.06, -0.04);
+      roue.rotation.x = -0.5;
+    } else if (e.data.handedness === 'right' && cadrePhoto.parent !== ctrl) {
+      ctrl.add(cadrePhoto);
+      cadrePhoto.position.set(0, 0, -0.16);
+    }
+  });
   ctrl.addEventListener('disconnected', function ()  { ctrl.userData.src = null; });
 
   ctrl.addEventListener('squeezestart', function () {
@@ -1171,7 +1424,10 @@ controllers.forEach(function (ctrl, idx) {
       demarrerZoom();
       return;
     }
-    if (mode !== MODE.LIBRE || grabIdx !== -1 || modeZoom) return;
+    // Le grip attrape la cible courante quel que soit le mode d'action de la
+    // gachette (precision/couleur/mesure) - plus de restriction a MAIN LIBRE
+    // depuis que ce n'est plus un onglet a part.
+    if (grabIdx !== -1 || modeZoom) return;
 
     var c = cibleCourante();
     if (!c) return;
@@ -1252,13 +1508,7 @@ renderer.setAnimationLoop(function (time, frame) {
 
   if (anchorPlaced) {
     preview.visible = false;
-    panneau.visible = carPret && !modeBureau;
-  }
-
-  if (anchor.visible && panneau.parent && panneau.visible) {
-    var camPos = new THREE.Vector3();
-    camera.getWorldPosition(camPos);
-    panneau.lookAt(camPos);
+    roue.visible = carPret && !modeBureau;
   }
 
   if (modeBureau) majCameraBureau();
@@ -1280,25 +1530,21 @@ renderer.setAnimationLoop(function (time, frame) {
     gizmoTranslate.position.copy(posLocale);
     gizmoRotate.position.copy(posLocale);
 
-    // Marqueurs d'axe : "0" au repos, valeur en direct (m ou degres) sur
-    // l'axe en cours de glissement.
-    poignees.forEach(function (pg) {
-      if (pg.type !== 'zero-t' && pg.type !== 'zero-r') return;
+    // Valeur toujours affichee (pas seulement pendant le glissement),
+    // surlignee en jaune quand on est en train de glisser CET axe precis.
+    marqueursValeur.forEach(function (mv) {
       var dragActuel = dragEtat || dragBureau;    // manette (VR) ou souris (bureau)
       var modeGlisse = dragEtat ? dragEtat.mode : (dragBureau ? dragBureau.type : null);
-      var actif = !!(dragActuel && dragActuel.axeLettre === pg.axeLettre &&
-                     ((pg.type === 'zero-t' && modeGlisse === 'translate') ||
-                      (pg.type === 'zero-r' && modeGlisse === 'rotate')));
-      var texte = actif
-        ? (pg.type === 'zero-t' ? texteAxeTranslation(pg.axeLettre) : texteAxeRotation(pg.axeLettre))
-        : '0';
-      dessinerMarqueurAxe(pg.mesh, texte, actif);
+      var actif = !!(dragActuel && dragActuel.axeLettre === mv.axeLettre && modeGlisse === mv.type);
+      var texte = mv.type === 'translate' ? texteAxeTranslation(mv.axeLettre) : texteAxeRotation(mv.axeLettre);
+      dessinerMarqueurAxe(mv.sprite, texte, actif);
     });
   }
 
   // A tenu + selection : le joystick regle la transparence des pieces
   // choisies (l'appui deux mains simultane est reserve au zoom).
   if (!modeBureau) {
+    pollAppelRoue();
     controllers.forEach(function (ctrl, ci) {
       var aActuel = boutonAppuye(ctrl, 4);
       if (aPrecedent[ci] && !aActuel) desactiverSelectionAB();
@@ -1314,7 +1560,7 @@ renderer.setAnimationLoop(function (time, frame) {
     });
   }
 
-  if (panneauSale) dessinerPanneau();
+  if (panneauSale) dessinerRoue();
   if (modeBureau) majBarreBureau();
 
   renderer.render(scene, camera);
@@ -1374,7 +1620,8 @@ function reinitialiserApresSession() {
   anchor.visible  = false;
   reticle.visible = false;
   preview.visible = false;
-  panneau.visible = false;
+  roue.visible    = false;
+  roueStack = [];
   relacherSelection();
   selection = [];
   piecesSurlignees = [];
@@ -1383,6 +1630,9 @@ function reinitialiserApresSession() {
   modeZoom = false; gripEtat = [false, false];
   aPrecedent = [false, false];
   dragBureau = null;
+  effacerMesure();
+  sortirModePhoto();
+  fermerApercuPhoto();
 
   if (racineModele) { pivot.remove(racineModele); racineModele = null; }
   pieces = [];
@@ -1529,13 +1779,13 @@ canvas.addEventListener('mousedown', function (evt) {
   if (evt.ctrlKey || evt.metaKey) {
     if (mode === MODE.GIZMO_T || mode === MODE.GIZMO_R) {
       var typeActif = (mode === MODE.GIZMO_T) ? 'translate' : 'rotate';
-      var typeZero  = (mode === MODE.GIZMO_T) ? 'zero-t' : 'zero-r';
-      var poigneesActives = poignees.filter(function (pg) { return pg.type === typeActif || pg.type === typeZero; });
+      var typeRAZ   = (mode === MODE.GIZMO_T) ? 'raz-t' : 'raz-r';
+      var poigneesActives = poignees.filter(function (pg) { return pg.type === typeActif || pg.type === typeRAZ; });
       var hitsPoignee = ray.intersectObjects(poigneesActives.map(function (pg) { return pg.mesh; }), false);
       if (hitsPoignee.length) {
         var poignee = poigneesActives.filter(function (pg) { return pg.mesh === hitsPoignee[0].object; })[0];
-        if (poignee.type === 'zero-t') { resetAxeTranslation(poignee.axeLettre); return; }
-        if (poignee.type === 'zero-r') { resetAxeRotation(poignee.axeLettre); return; }
+        if (poignee.type === 'raz-t') { resetAxeTranslation(poignee.axeLettre); return; }
+        if (poignee.type === 'raz-r') { resetAxeRotation(poignee.axeLettre); return; }
         if (mode === MODE.GIZMO_T) demarrerDragTranslateSouris(poignee, ray.ray.origin, ray.ray.direction);
         else demarrerDragRotateSouris(poignee, ray.ray.origin, ray.ray.direction);
         return;
@@ -1549,6 +1799,11 @@ canvas.addEventListener('mousedown', function (evt) {
     if (mode === MODE.COULEUR && pieces.length) {
       var hitsC = ray.intersectObjects(pieces, false);
       if (hitsC.length) remplirPiece(hitsC[0]);
+      return;
+    }
+    if (mode === MODE.MESURE && pieces.length) {
+      var hitsM = ray.intersectObjects(pieces, false);
+      if (hitsM.length) gererClicMesure(hitsM[0]);
       return;
     }
     if (mode === MODE.LIBRE && cibleCourante() && pieces.length) {
@@ -1592,6 +1847,8 @@ var secPrecision = document.getElementById('secPrecision');
 var secEchelle   = document.getElementById('secEchelle');
 var secCouleur   = document.getElementById('secCouleur');
 var secCouleur2  = document.getElementById('secCouleur2');
+var secMesure    = document.getElementById('secMesure');
+var secCapture   = document.getElementById('secCapture');
 
 PALETTE.forEach(function (couleur, i) {
   var sw = document.createElement('button');
@@ -1603,9 +1860,12 @@ PALETTE.forEach(function (couleur, i) {
   secCouleur.appendChild(sw);
 });
 
-document.getElementById('bTabLibre').addEventListener('click', function () { definirMode(MODE.LIBRE); });
-document.getElementById('bTabPrecision').addEventListener('click', function () { definirMode(MODE.GIZMO_T); });
-document.getElementById('bTabCouleur').addEventListener('click', function () { definirMode(MODE.COULEUR); });
+var ongletBureauCapture = false;   // l'onglet CAPTURE n'est pas un "mode" (n'affecte pas la gachette/le clic)
+document.getElementById('bTabLibre').addEventListener('click', function () { ongletBureauCapture = false; definirMode(MODE.LIBRE); });
+document.getElementById('bTabPrecision').addEventListener('click', function () { ongletBureauCapture = false; definirMode(MODE.GIZMO_T); });
+document.getElementById('bTabCouleur').addEventListener('click', function () { ongletBureauCapture = false; definirMode(MODE.COULEUR); });
+document.getElementById('bTabMesure').addEventListener('click', function () { ongletBureauCapture = false; definirMode(MODE.MESURE); });
+document.getElementById('bTabCapture').addEventListener('click', function () { ongletBureauCapture = true; majBarreBureau(); });
 document.getElementById('bDeselectionner').addEventListener('click', function () { desactiverSelectionAB(); });
 document.getElementById('bTranslater').addEventListener('click', function () { definirMode(MODE.GIZMO_T); });
 document.getElementById('bTourner').addEventListener('click', function () { definirMode(MODE.GIZMO_R); });
@@ -1616,6 +1876,10 @@ document.getElementById('bColorierAuto').addEventListener('click', colorierAutom
 document.getElementById('bReinitCouleurs').addEventListener('click', reinitialiserCouleurs);
 document.getElementById('bAnnuler').addEventListener('click', annuler);
 document.getElementById('bRefaire').addEventListener('click', retablir);
+document.getElementById('bRazGenerale').addEventListener('click', razGenerale);
+document.getElementById('bPrendrePhoto').addEventListener('click', capturerPhoto);
+document.getElementById('bFondAR').addEventListener('click', function () { fondCapture = 'ar'; majBarreBureau(); });
+document.getElementById('bFondVR').addEventListener('click', function () { fondCapture = 'vr'; majBarreBureau(); });
 document.getElementById('bQuitterBureau').addEventListener('click', function () {
   reinitialiserApresSession();
   modeBureau = false;
@@ -1634,15 +1898,24 @@ Array.prototype.forEach.call(secEchelle.querySelectorAll('button[data-pct]'), fu
 });
 
 function majBarreBureau() {
-  var enPrecision = (mode === MODE.GIZMO_T || mode === MODE.GIZMO_R);
-  document.getElementById('bTabLibre').className     = mode === MODE.LIBRE ? 'actif' : '';
+  var enPrecision = !ongletBureauCapture && (mode === MODE.GIZMO_T || mode === MODE.GIZMO_R);
+  var enLibre     = !ongletBureauCapture && mode === MODE.LIBRE;
+  var enCouleur   = !ongletBureauCapture && mode === MODE.COULEUR;
+  var enMesure    = !ongletBureauCapture && mode === MODE.MESURE;
+
+  document.getElementById('bTabLibre').className     = enLibre ? 'actif' : '';
   document.getElementById('bTabPrecision').className = enPrecision ? 'actif' : '';
-  document.getElementById('bTabCouleur').className   = mode === MODE.COULEUR ? 'actif' : '';
-  secLibre.className     = 'ligne section' + (mode === MODE.LIBRE ? ' visible' : '');
+  document.getElementById('bTabCouleur').className   = enCouleur ? 'actif' : '';
+  document.getElementById('bTabMesure').className    = enMesure ? 'actif' : '';
+  document.getElementById('bTabCapture').className   = ongletBureauCapture ? 'actif' : '';
+
+  secLibre.className     = 'ligne section' + (enLibre ? ' visible' : '');
   secPrecision.className = 'ligne section' + (enPrecision ? ' visible' : '');
   secEchelle.className   = 'ligne section' + (enPrecision ? ' visible' : '');
-  secCouleur.className   = 'ligne section' + (mode === MODE.COULEUR ? ' visible' : '');
-  secCouleur2.className  = 'ligne section' + (mode === MODE.COULEUR ? ' visible' : '');
+  secCouleur.className   = 'ligne section' + (enCouleur ? ' visible' : '');
+  secCouleur2.className  = 'ligne section' + (enCouleur ? ' visible' : '');
+  secMesure.className    = 'ligne section' + (enMesure ? ' visible' : '');
+  secCapture.className   = 'ligne section' + (ongletBureauCapture ? ' visible' : '');
 
   document.getElementById('bTranslater').className = mode === MODE.GIZMO_T ? 'actif' : '';
   document.getElementById('bTourner').className    = mode === MODE.GIZMO_R ? 'actif' : '';
@@ -1651,6 +1924,8 @@ function majBarreBureau() {
   document.getElementById('bRefaire').disabled = !refaire.length;
   document.getElementById('bInfoCible').textContent = cibleActive()
     ? (selection.length + ' piece(s) selectionnee(s)') : 'Modele entier';
+  document.getElementById('bFondAR').className = fondCapture === 'ar' ? 'actif' : '';
+  document.getElementById('bFondVR').className = fondCapture === 'vr' ? 'actif' : '';
 
   Array.prototype.forEach.call(secCouleur.querySelectorAll('.swatch'), function (sw) {
     sw.classList.toggle('actif', parseInt(sw.dataset.idx, 10) === couleurIdx);

@@ -1,4 +1,4 @@
-# Visionneuse CAO en réalité mixte — v1.4.0
+# Visionneuse CAO en réalité mixte — v1.5.0
 
 Application WebXR pour Meta Quest 3 : pose n'importe quel modèle 3D (issu
 d'une modélisation 3DEXPERIENCE) sur une vraie table, manipule-le à main
@@ -26,27 +26,47 @@ allumer sur le PC.
 
 ## Utilisation dans le casque
 
+Le menu plat a été remplacé par un **disque attaché à la main gauche**
+(déplaçable sur l'autre main par un clic de joystick). On le pointe avec le
+rayon de l'AUTRE manette et on valide à la **gâchette** ; le centre du
+disque sert de bouton RETOUR pour remonter d'un niveau.
+
+**Arborescence du menu :**
+- **Couleurs** → Automatique / Manuel (ouvre la palette) / RAZ
+- **Déplacements** → Précis (Translation / Rotation) / RAZ générale
+- **Mesures**
+- **Annuler / Refaire / Quitter / Remettre sur la table**
+- **Capture d'affichage** → Cadre (prendre une photo) / Fond (Réalité
+  virtuelle ou Réalité augmentée)
+
 | Action | Commande |
 |---|---|
 | Poser le modèle sur la table | Vise la table, appuie sur la **gâchette** |
-| Attraper **tout le modèle** à main levée | **Grip** seul (sans rien tenir d'autre), bouge la main, relâche |
+| Attraper **tout le modèle** à main levée | **Grip** seul (sans rien tenir d'autre), bouge la main, relâche - marche quel que soit le menu ouvert |
 | **Choisir une ou plusieurs pièces** à déplacer indépendamment | Maintiens le bouton **A** (ou X), et pendant que tu le tiens, vise chaque pièce avec la **gâchette** pour la (dé)sélectionner (1 pièce = suffisant, plusieurs = un groupe) |
 | Déplacer la sélection | Toujours **A tenu**, appuie en plus sur le **grip** et bouge la main |
-| Régler la transparence de la sélection | Toujours **A tenu**, pousse le **joystick** (utile pour voir à travers pendant que tu choisis) |
+| Régler la transparence de la sélection | Toujours **A tenu**, pousse le **joystick** |
 | Désélectionner | **Relâche le bouton A** — retour automatique à « tout le modèle » |
-| **Zoomer** (avant/arrière, sur tout le modèle) | Maintiens le **grip des 2 manettes en même temps**, écarte ou rapproche les mains - le % s'affiche en direct entre les 2 mains, et « s'aimante » sur 50/75/100/125/150/200% |
-| **Montrer/pointer quelque chose** | Maintiens la **gâchette appuyée** : un laser rouge apparaît et s'arrête sur la pièce visée |
-| Translater / tourner précisément (onglet PRÉCISION) | Vise une flèche ou un anneau coloré avec le rayon, maintiens la **gâchette**, bouge la main, relâche - la valeur (mètres/degrés) s'affiche en direct à la place du « 0 » |
-| Remettre UN axe à zéro (onglet PRÉCISION) | Vise le petit rond « 0 » à côté de la flèche/l'anneau de cet axe, **gâchette** |
-| Remettre TOUTE la position/rotation à zéro (onglet PRÉCISION) | Bouton « TOUT REMETTRE À ZÉRO » (ou « 0 POSITION » / « 0 ROTATION » séparément) |
-| Déplacer le centre de rotation (onglet PRÉCISION) | Vise un point du modèle (hors flèche/anneau), **gâchette** |
-| Colorer une pièce (onglet COULEUR) | Choisis une couleur dans la palette, puis vise la pièce et appuie sur la **gâchette** |
-| Colorer toutes les pièces automatiquement | Bouton « COLORIER AUTO » |
-| **Annuler / Refaire** | Boutons « ANNULER » / « REFAIRE » du panneau (déplacements, rotations, zoom, couleurs) |
-| Appuyer sur un bouton du panneau | Vise le bouton avec le rayon, **gâchette** |
+| **Zoomer** (avant/arrière, sur tout le modèle) | Maintiens le **grip des 2 manettes en même temps** - le % s'affiche en direct entre les 2 mains, et « s'aimante » sur 50/75/100/125/150/200% |
+| **Montrer/pointer quelque chose** | Maintiens la **gâchette appuyée** : un laser rouge s'arrête sur la pièce visée |
+| Translater / tourner précisément (menu Déplacements > Précis) | Vise une flèche ou un anneau, maintiens la **gâchette**, bouge la main, relâche - la valeur (m / degrés) reste affichée en permanence dans sa case |
+| Remettre UN axe à zéro | Vise le petit bouton **« RAZ »** à côté de la case de valeur de cet axe, **gâchette** (case et bouton sont deux objets séparés) |
+| **RAZ générale** (menu Déplacements) | Remet le modèle ENTIER à sa position d'origine, **y compris les pièces déjà déplacées individuellement ou en groupe** |
+| Déplacer le centre de rotation | Vise un point du modèle (hors flèche/anneau), **gâchette** |
+| Colorer une pièce (menu Couleurs > Manuel) | Choisis une couleur dans la palette (roue), puis vise la pièce et appuie sur la **gâchette** |
+| **Mesurer une distance** (menu Mesures) | Vise un 1er point puis un 2e avec la **gâchette** : ligne + distance réelle en mm affichées (indépendant du zoom en cours) |
+| **Prendre une photo** (menu Capture > Cadre) | Le prochain appui sur la **gâchette** (n'importe laquelle) capture et affiche un aperçu flottant ; reclic dessus pour le fermer |
+| **Annuler / Refaire** | Menu (couvre déplacements, rotations, zoom, couleurs) |
 
-L'application s'ouvre toujours en mode **MAIN LIBRE**, cible **modèle entier**.
-Le panneau affiche aussi le **% d'échelle par rapport à la taille réelle** de l'objet (onglet PRÉCISION), pour savoir si tu regardes le modèle en vrai grandeur ou zoomé/dézoomé.
+L'application s'ouvre toujours **modèle entier** sélectionné, pas de menu
+« mode » à choisir en premier : le grip agit toujours, la gâchette suit
+simplement le dernier choix fait dans le menu (précision, couleur, mesure).
+Le menu affiche aussi le **% d'échelle réelle** dans Déplacements.
+
+> ⚠️ **Limite technique (photo)** : WebXR ne donne pas accès aux pixels du
+> passthrough à une page web (sécurité/vie privée), donc « Réalité
+> augmentée » utilise un fond transparent en secours, pas la vraie caméra du
+> casque - déjà rencontré sur VR CEC, ce n'est pas un bug de cette appli.
 
 Le placement essaie la détection réelle de surface (hit-test) ; si le
 navigateur ne la supporte pas (cas de Wolvic aujourd'hui), le modèle suit
@@ -56,17 +76,17 @@ navigateur ajoute le support.
 ## Utilisation sur ordinateur, sans casque (mode souris)
 
 Sur l'écran d'accueil, bouton **« Voir sur cet écran (souris) »** : même
-modèle, mêmes outils (main libre, précision, couleur, annuler/refaire,
-échelle), pilotés à la souris - pratique pour préparer une visite sans
-avoir le Quest sous la main.
+modèle, mêmes outils (main libre, précision, couleur, mesures, capture,
+annuler/refaire), pilotés à la souris - pratique pour préparer une visite
+sans avoir le Quest sous la main.
 
 | Action | Commande souris |
 |---|---|
 | Orbiter la vue | Glisser (clic gauche) |
 | Zoomer la vue (caméra) | Molette |
 | Choisir une/des pièce(s) | **Maj + clic** sur une pièce (reclic = désélectionne) |
-| Déplacer la cible / utiliser le gizmo / peindre | **Ctrl + glisser** (sur le modèle, une flèche/anneau, ou une pièce selon l'onglet actif) |
-| Tout le reste (onglets, RAZ, palette, annuler/refaire, % d'échelle) | Barre d'outils en haut de l'écran |
+| Déplacer la cible / utiliser le gizmo / peindre / mesurer | **Ctrl + glisser** ou **Ctrl + clic** (selon l'onglet actif) |
+| Tout le reste (onglets MAIN LIBRE/PRÉCISION/COULEUR/MESURES/CAPTURE, RAZ, RAZ GÉNÉRALE, palette, annuler/refaire, % d'échelle, fond de capture) | Barre d'outils en haut de l'écran |
 
 ## Ajouter un modèle depuis 3DEXPERIENCE
 
