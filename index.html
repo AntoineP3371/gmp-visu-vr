@@ -14,8 +14,31 @@
     }
     h1 { font-size: 22px; margin: 0 0 8px; }
     p  { font-size: 13px; color: #aaa; margin: 0 0 16px; max-width: 420px; }
-    select { padding: 10px 14px; font-size: 15px; border-radius: 8px; border: none;
-              margin: 5px; min-width: 260px; }
+    /* Liste de modeles "maison" (boutons), pas un <select> natif : sur
+       Wolvic (navigateur VR du Quest), le picker natif d'un <select> ne
+       s'ouvrait pas du tout au clic/toucher - un souci connu des
+       navigateurs embarques en VR avec les controles de formulaire natifs. */
+    .menu-modele { position: relative; display: inline-block; min-width: 260px; margin: 5px; text-align: left; }
+    .btn-modele-choisi {
+      width: 100%; padding: 10px 14px; font-size: 15px; border-radius: 8px; border: none;
+      background: #fff; color: #111; cursor: pointer; box-sizing: border-box;
+      display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    }
+    .btn-modele-choisi::after { content: '\25BC'; font-size: 11px; color: #666; flex: none; }
+    .liste-modeles {
+      display: none; position: absolute; top: 100%; left: 0; right: 0; z-index: 20;
+      background: #fff; border-radius: 8px; margin-top: 4px; max-height: 240px; overflow-y: auto;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.5);
+    }
+    .liste-modeles.ouverte { display: block; }
+    .liste-modeles button {
+      display: block; width: 100%; text-align: left; padding: 10px 14px; font-size: 15px;
+      border: none; background: #fff; color: #111; cursor: pointer; border-bottom: 1px solid #eee;
+      box-sizing: border-box;
+    }
+    .liste-modeles button:last-child { border-bottom: none; }
+    .liste-modeles button:hover { background: #eef6ff; }
+    .liste-modeles button.actif { background: #2f8fd6; color: #fff; }
     .btn { padding: 14px 30px; font-size: 17px; border: none; border-radius: 12px;
            color: white; cursor: pointer; margin: 5px; background: #2f8fd6; }
     .btn.secondaire { background: #444; }
@@ -59,12 +82,15 @@
       Choisis un modele, pose-le sur ta table, puis manipule-le a main levee
       ou precisement, et colore ses pieces.
     </p>
-    <select id="selectModele"></select><br/>
+    <div class="menu-modele" id="menuModele">
+      <button type="button" id="boutonModeleChoisi">Chargement...</button>
+      <div class="liste-modeles" id="listeModeles"></div>
+    </div><br/>
     <button class="btn" id="btnCommencer">Entrer en realite mixte</button>
     <button class="btn secondaire" id="btnBureau">Voir sur cet ecran (souris)</button>
     <div id="status">Chargement...</div>
     <div id="errbox"></div>
-    <div id="version">v1.11.0</div>
+    <div id="version">v1.12.0</div>
   </div>
   <canvas id="c"></canvas>
 
@@ -138,6 +164,6 @@
   <script src="three.min.js"></script>
   <script src="GLTFLoader.js"></script>
   <script src="drive-config.js?v=1.10.1"></script>
-  <script src="app.js?v=1.11.0"></script>
+  <script src="app.js?v=1.12.0"></script>
 </body>
 </html>

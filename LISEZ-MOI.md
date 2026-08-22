@@ -1,4 +1,4 @@
-# Visionneuse CAO en réalité mixte — v1.11.0
+# Visionneuse CAO en réalité mixte — v1.12.0
 
 Application WebXR pour Meta Quest 3 : pose n'importe quel modèle 3D (issu
 d'une modélisation 3DEXPERIENCE) sur une vraie table, manipule-le à main
@@ -44,7 +44,8 @@ gâchette.
 - **Couleurs** → Automatique / Manuel (ouvre directement la palette) / RAZ
 - **Déplacements** → Libre / Précis (Translation / Rotation) / RAZ générale
 - **Mesures** → ouvre la liste des mesures déjà prises (pour les rappeler).
-  **Quitter ce sous-menu (« < RETOUR ») désarme le mode mesure**
+  **Quitter ce sous-menu (« < RETOUR ») désarme le mode mesure ET cache la
+  mesure affichée** (l'historique n'est pas perdu, juste masqué)
 - **Annuler / Refaire / Quitter / Remettre sur la table**
 - **Capture d'affichage** → Cadre (prendre une photo) / Fond (Réalité
   virtuelle ou Réalité augmentée)
@@ -55,8 +56,8 @@ gâchette.
 | Attraper **la cible courante** à main levée (tout le modèle, ou la sélection si une pièce/un groupe est choisi) | **Grip** seul (sans rien tenir d'autre), bouge la main, relâche - marche quel que soit le menu ouvert |
 | **Choisir une ou plusieurs pièces** à déplacer indépendamment | Maintiens le bouton **A** (ou X), et pendant que tu le tiens, vise chaque pièce avec la **gâchette** pour la (dé)sélectionner (1 pièce = suffisant, plusieurs = un groupe) |
 | Déplacer la sélection à main levée ou précisément | Relâche A si besoin : **la sélection reste active**, grip ou gizmo agissent dessus normalement |
-| Régler la transparence de la sélection | **A tenu**, pousse le **joystick** haut/bas - un pourcentage (100 % opaque → 0 % transparent) s'affiche en direct au-dessus de la pièce, **puis un cran de plus = mode « fantôme »** (halo bleu, quasi invisible). **Le réglage reste tel quel quand tu relâches** le joystick ou la gâchette - pousse dans l'autre sens pour ré-opacifier |
-| **Régler la transparence d'une pièce visée**, sans la sélectionner d'abord | Vise-la au laser (**gâchette tenue**), pousse le **joystick** haut/bas - même comportement (pourcentage, fantôme, ça reste) |
+| Régler la transparence de la sélection | **A tenu**, pousse le **joystick** haut/bas - un pourcentage (100 % opaque → 0 % transparent) s'affiche en direct au-dessus de la pièce. **Le réglage reste tel quel quand tu relâches** le joystick ou la gâchette - pousse dans l'autre sens pour ré-opacifier |
+| **Régler la transparence d'une pièce visée**, sans la sélectionner d'abord | Vise-la au laser (**gâchette tenue**), pousse le **joystick** haut/bas - même comportement (pourcentage, ça reste) |
 | **Revenir à « tout le modèle »** | Bouton **« Libre »** (menu Déplacements) - désélectionne et repasse en déplacement libre |
 | **Zoomer** (avant/arrière, sur tout le modèle) | Maintiens le **grip des 2 manettes en même temps** - le % s'affiche en direct entre les 2 mains, et « s'aimante » sur 50/75/100/125/150/200% |
 | **Montrer/pointer quelque chose** | Maintiens la **gâchette appuyée** : un laser rouge s'arrête sur la pièce visée |

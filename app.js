@@ -12,7 +12,9 @@ var status  = document.getElementById('status');
 var overlay = document.getElementById('overlay');
 var canvas  = document.getElementById('c');
 var errbox  = document.getElementById('errbox');
-var selectModele = document.getElementById('selectModele');
+var boutonModeleChoisi = document.getElementById('boutonModeleChoisi');
+var listeModelesEl     = document.getElementById('listeModeles');
+var menuModeleEl       = document.getElementById('menuModele');
 
 if (typeof THREE === 'undefined') {
   status.textContent = 'Erreur: Three.js non charge';
@@ -30,17 +32,49 @@ if (!navigator.xr) {
 }
 
 // --- Liste des modeles : modeles.json (local) + dossier Google Drive
-// (optionnel, cf drive-config.js) fusionnes dans le meme <select>. Un
-// modele Drive est charge directement depuis son URL de telechargement
-// (alt=media) : chargerModele() n'a besoin d'aucune adaptation, un chemin
-// relatif local et une URL complete se chargent de la meme facon via
-// GLTFLoader.load().
+// (optionnel, cf drive-config.js) fusionnes dans la meme liste. Un modele
+// Drive est charge directement depuis son URL de telechargement (alt=media) :
+// chargerModele() n'a besoin d'aucune adaptation, un chemin relatif local et
+// une URL complete se chargent de la meme facon via GLTFLoader.load().
+//
+// Liste "maison" en boutons plutot qu'un <select> natif : sur Wolvic (le
+// navigateur du Quest), le picker natif d'un <select> ne s'ouvrait pas du
+// tout au clic - un souci connu des navigateurs VR avec les controles de
+// formulaire natifs (le systeme d'exploitation doit dessiner une popup
+// par-dessus la vue VR, ce qui ne marche pas toujours).
+var listeModelesOptions = [];      // { nom, fichier }
+var modeleChoisi = { nom: '', fichier: '' };
+
 function ajouterOptionModele(nom, valeur) {
-  var opt = document.createElement('option');
-  opt.value = valeur;
-  opt.textContent = nom;
-  selectModele.appendChild(opt);
+  listeModelesOptions.push({ nom: nom, fichier: valeur });
+  if (!modeleChoisi.fichier) definirModeleChoisi(nom, valeur);
+  redessinerListeModeles();
 }
+function definirModeleChoisi(nom, valeur) {
+  modeleChoisi = { nom: nom, fichier: valeur };
+  boutonModeleChoisi.textContent = nom;
+  listeModelesEl.classList.remove('ouverte');
+  redessinerListeModeles();
+}
+function redessinerListeModeles() {
+  listeModelesEl.innerHTML = '';
+  listeModelesOptions.forEach(function (m) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = m.nom;
+    if (m.fichier === modeleChoisi.fichier) b.className = 'actif';
+    b.addEventListener('click', function () { definirModeleChoisi(m.nom, m.fichier); });
+    listeModelesEl.appendChild(b);
+  });
+}
+boutonModeleChoisi.addEventListener('click', function () {
+  listeModelesEl.classList.toggle('ouverte');
+});
+// Ferme la liste si on clique/touche ailleurs sur la page.
+document.addEventListener('click', function (e) {
+  if (!menuModeleEl.contains(e.target)) listeModelesEl.classList.remove('ouverte');
+});
+
 function configDriveValide(cle) {
   var cfg = window.DRIVE_CONFIG;
   return !!(cfg && cfg[cle] && cfg[cle].indexOf('COLLE_') !== 0);
@@ -68,8 +102,8 @@ Promise.all([
   chargerListeDrive()
 ]).then(function (resultats) {
   resultats[0].forEach(function (m) { ajouterOptionModele(m.nom, m.fichier); });
-  if (!selectModele.options.length) {
-    ajouterOptionModele('Aucun modele - voir LISEZ-MOI.md', '');
+  if (!listeModelesOptions.length) {
+    boutonModeleChoisi.textContent = 'Aucun modele - voir LISEZ-MOI.md';
     document.getElementById('btnCommencer').disabled = true;
   }
 });
@@ -393,10 +427,6 @@ function restaurerOpaciteDe(pieces_) {
       mats.forEach(function (m) { m.opacity = 1; });
     });
     piece.userData.niveauTransp = 0;
-    piece.userData.fantome = false;
-    var iF = piecesFantome.indexOf(piece);
-    if (iF !== -1) piecesFantome.splice(iF, 1);
-    majEmissiveFantome(piece, false);
   });
 }
 function appliquerTransparencePiece(piece, opacite) {
@@ -415,57 +445,20 @@ function appliquerTransparenceSelection(opacite) {
 //  la valeur "reste" quand on relache le joystick (qui revient seul au
 //  centre) ou la gachette, contrairement a une ancienne version ou relacher
 //  le joystick faisait retomber l'opacite a 1 instantanement. Echelle 0-100
-//  (0 = opaque, 100 = transparent), puis un CRAN SUPPLEMENTAIRE ("fantome")
-//  atteint en poussant encore au-dela de 100 : opacite tres faible fixe +
-//  halo bleu emissif, jusqu'a ce qu'on repousse dans l'autre sens.
+//  (0 = opaque, 100 = transparent), bornee des deux cotes.
 // ============================================================================
 var VITESSE_TRANSP = 130; // points de niveau (0-100) par seconde a pleine deflexion
-var piecesFantome = [];   // pieces actuellement en mode fantome (maintenance par frame)
-var COULEUR_FANTOME = 0x3377ff;
 
-// objet peut etre une piece racine (Object3D avec enfants) ou un mesh
-// individuel isole - Object3D.traverse() existe sur les deux (un mesh sans
-// enfant se visite juste lui-meme), donc pas besoin de distinguer les cas.
-function majEmissiveFantome(objet, actif) {
-  var couleur = actif ? COULEUR_FANTOME
-    : (selection.indexOf(trouverPieceRacine(objet)) !== -1 ? 0x554400 : 0x000000);
-  objet.traverse(function (o) {
-    if (!o.isMesh) return;
-    var mats = Array.isArray(o.material) ? o.material : [o.material];
-    mats.forEach(function (m) { if (m.emissive) m.emissive.setHex(couleur); });
-  });
-}
-
-// etat = objet portant .niveauTransp/.fantome (userData d'une piece pour un
-// reglage individuel au laser, ou un objet dedie pour un groupe/selection
-// entier qui doit avancer bloc par bloc, sans desynchronisation possible
-// entre ses pieces). appliquer(opacite) et emissifs(actif) permettent a
-// l'appelant de cibler UNE piece ou TOUTE une selection avec la meme
-// logique. Retourne le texte a afficher dans l'etiquette flottante.
-function ajusterNiveauTransparence(etat, axisValue, dt, appliquer, emissifs) {
+// etat = objet portant .niveauTransp (userData d'une piece pour un reglage
+// individuel au laser, ou un objet dedie pour un groupe/selection entier qui
+// doit avancer bloc par bloc, sans desynchronisation possible entre ses
+// pieces). appliquer(opacite) permet a l'appelant de cibler UNE piece ou
+// TOUTE une selection avec la meme logique. Retourne le texte a afficher
+// dans l'etiquette flottante.
+function ajusterNiveauTransparence(etat, axisValue, dt, appliquer) {
   if (etat.niveauTransp === undefined) etat.niveauTransp = 0;
-  if (etat.fantome === undefined) etat.fantome = false;
-
-  if (etat.fantome) {
-    if (axisValue < 0) { // repousse vers l'opaque -> sort du fantome
-      etat.fantome = false;
-      etat.niveauTransp = 100;
-      appliquer(0);
-      emissifs(false);
-      return '0 %';
-    }
-    return 'FANTOME';
-  }
-
   var niveau = etat.niveauTransp + axisValue * VITESSE_TRANSP * dt;
-  if (niveau > 100) {
-    etat.fantome = true;
-    etat.niveauTransp = 100;
-    appliquer(0.16);
-    emissifs(true);
-    return 'FANTOME';
-  }
-  etat.niveauTransp = Math.max(0, niveau);
+  etat.niveauTransp = Math.max(0, Math.min(100, niveau));
   appliquer(1 - etat.niveauTransp / 100);
   return Math.round(100 - etat.niveauTransp) + ' %';
 }
@@ -473,24 +466,12 @@ function ajusterNiveauTransparence(etat, axisValue, dt, appliquer, emissifs) {
 // Etat PARTAGE pour l'ajustement via SELECTION (A+gachette) : toutes les
 // pieces choisies avancent forcement ensemble (meme increment chaque
 // frame), donc un seul etat suffit - pas de risque de desync entre elles.
-var etatTranspSelection = { niveauTransp: 0, fantome: false };
-function appliquerFantomeSelection(actif) {
-  selection.forEach(function (piece) {
-    if (actif) { if (piecesFantome.indexOf(piece) === -1) piecesFantome.push(piece); }
-    else { var i = piecesFantome.indexOf(piece); if (i !== -1) piecesFantome.splice(i, 1); }
-    majEmissiveFantome(piece, actif);
-  });
-}
-function appliquerFantomePieceUnique(piece, actif) {
-  if (actif) { if (piecesFantome.indexOf(piece) === -1) piecesFantome.push(piece); }
-  else { var i = piecesFantome.indexOf(piece); if (i !== -1) piecesFantome.splice(i, 1); }
-  majEmissiveFantome(piece, actif);
-}
+var etatTranspSelection = { niveauTransp: 0 };
 
-// Etiquette flottante "NN %" / "FANTOME", ancree AU-DESSUS de la piece en
-// cours de reglage, visible seulement pendant l'ajustement actif (contrairement
-// a l'indicateur Annuler/Refaire, pas besoin qu'elle persiste apres coup :
-// la transparence du modele lui-meme reste le retour visuel permanent).
+// Etiquette flottante "NN %", ancree AU-DESSUS de la piece en cours de
+// reglage, visible seulement pendant l'ajustement actif (contrairement a
+// l'indicateur Annuler/Refaire, pas besoin qu'elle persiste apres coup : la
+// transparence du modele lui-meme reste le retour visuel permanent).
 var tlc = document.createElement('canvas');
 tlc.width = 200; tlc.height = 70;
 var tlctx = tlc.getContext('2d');
@@ -500,13 +481,13 @@ spriteTransp.scale.set(0.09, 0.09 * 70 / 200, 1);
 spriteTransp.renderOrder = 1600;
 spriteTransp.visible = false;
 scene.add(spriteTransp);
-function afficherLabelTransparence(objet, texte, fantome) {
+function afficherLabelTransparence(objet, texte) {
   tlctx.clearRect(0, 0, 200, 70);
   rr(tlctx, 2, 2, 196, 66, 14);
-  tlctx.fillStyle = fantome ? 'rgba(30,50,95,0.88)' : 'rgba(20,20,20,0.85)'; tlctx.fill();
+  tlctx.fillStyle = 'rgba(20,20,20,0.85)'; tlctx.fill();
   rr(tlctx, 2, 2, 196, 66, 14);
-  tlctx.strokeStyle = fantome ? '#5588ff' : '#8fd6ff'; tlctx.lineWidth = 3; tlctx.stroke();
-  tlctx.fillStyle = fantome ? '#88aaff' : '#8fd6ff'; tlctx.font = 'bold 26px sans-serif';
+  tlctx.strokeStyle = '#8fd6ff'; tlctx.lineWidth = 3; tlctx.stroke();
+  tlctx.fillStyle = '#8fd6ff'; tlctx.font = 'bold 26px sans-serif';
   tlctx.textAlign = 'center'; tlctx.textBaseline = 'middle';
   tlctx.fillText(texte, 100, 37);
   texTransp.needsUpdate = true;
@@ -557,7 +538,7 @@ function desactiverSelectionAB() {
   // (et on enregistre le deplacement pour Annuler) AVANT de la detruire.
   if (grabIdx !== -1) terminerGrab();
   restaurerOpaciteDe(selection);
-  etatTranspSelection = { niveauTransp: 0, fantome: false };
+  etatTranspSelection = { niveauTransp: 0 };
   selection = [];
   surlignerSelection();
   relacherSelection();
@@ -1711,10 +1692,15 @@ function traiterClicRoue(zone) {
   if (zone === 'back') {
     var noeudQuitte = roueStack[roueStack.length - 1];
     roueStack.pop();
-    // Quitter le sous-menu Mesures desarme le mode mesure : sinon un clic
-    // sur le modele continuait a prendre des points de mesure alors que le
-    // menu affiche est deja referme, ce qui est trompeur.
-    if (noeudQuitte && noeudQuitte.mesures && mode === MODE.MESURE) definirMode(MODE.LIBRE);
+    // Quitter le sous-menu Mesures desarme le mode mesure ET cache la
+    // mesure actuellement affichee (ligne/etiquette/points/croix) : sinon
+    // un clic sur le modele continuait a prendre des points, ET la mesure
+    // precedente restait visible dans la scene alors que le menu est deja
+    // referme, ce qui est trompeur dans les deux cas.
+    if (noeudQuitte && noeudQuitte.mesures) {
+      if (mode === MODE.MESURE) definirMode(MODE.LIBRE);
+      nettoyerAffichageMesure();
+    }
     majPanneau();
     return;
   }
@@ -2184,9 +2170,8 @@ renderer.setAnimationLoop(function (time, frame) {
         if (gp && gp.axes && gp.axes.length > 3) {
           var t = gp.axes[3] || 0;
           if (Math.abs(t) > 0.08) {
-            var texteSel = ajusterNiveauTransparence(etatTranspSelection, t, dt,
-              appliquerTransparenceSelection, appliquerFantomeSelection);
-            afficherLabelTransparence(selection[0], texteSel, etatTranspSelection.fantome);
+            var texteSel = ajusterNiveauTransparence(etatTranspSelection, t, dt, appliquerTransparenceSelection);
+            afficherLabelTransparence(selection[0], texteSel);
             transpAffichee = true;
           }
         }
@@ -2195,22 +2180,13 @@ renderer.setAnimationLoop(function (time, frame) {
         if (Math.abs(tLaser) > 0.08) {
           var piece = ctrl.userData.pieceLaser;
           var texteLaser = ajusterNiveauTransparence(piece.userData, tLaser, dt,
-            function (op) { appliquerTransparencePiece(piece, op); },
-            function (actif) { appliquerFantomePieceUnique(piece, actif); });
-          afficherLabelTransparence(piece, texteLaser, piece.userData.fantome);
+            function (op) { appliquerTransparencePiece(piece, op); });
+          afficherLabelTransparence(piece, texteLaser);
           transpAffichee = true;
         }
       }
     });
     if (!transpAffichee) spriteTransp.visible = false;
-  }
-
-  // Les pieces en mode fantome gardent leur halo bleu meme hors ajustement
-  // actif (l'etat "reste" tant qu'on ne repousse pas le joystick dans
-  // l'autre sens) - un autre systeme (survol, selection) pourrait avoir
-  // ecrase l'emissive entre-temps, donc on la reaffirme chaque frame.
-  if (piecesFantome.length) {
-    piecesFantome.forEach(function (p) { majEmissiveFantome(p, true); });
   }
 
   if (panneauSale) dessinerRoue();
@@ -2221,9 +2197,9 @@ renderer.setAnimationLoop(function (time, frame) {
 
 // --- Bouton "Entrer en realite mixte" ---
 document.getElementById('btnCommencer').addEventListener('click', function () {
-  var fichier = selectModele.value;
+  var fichier = modeleChoisi.fichier;
   if (!fichier) { status.textContent = 'Choisissez un modele'; return; }
-  nomModeleCourant = selectModele.options[selectModele.selectedIndex].textContent;
+  nomModeleCourant = modeleChoisi.nom;
   historique = []; refaire = [];
 
   // Certains casques/navigateurs rejettent la session en bloc si UNE SEULE
@@ -2293,8 +2269,7 @@ function reinitialiserApresSession() {
   pieceSurvolee = [null, null];
   objetSurvolePrecedent = [null, null];
   idHoverRoue = null;
-  piecesFantome = [];
-  etatTranspSelection = { niveauTransp: 0, fantome: false };
+  etatTranspSelection = { niveauTransp: 0 };
   spriteTransp.visible = false;
 }
 
@@ -2608,9 +2583,9 @@ function majBarreBureau() {
 
 // --- Bouton "Voir sur cet ecran (souris)" ---
 document.getElementById('btnBureau').addEventListener('click', function () {
-  var fichier = selectModele.value;
+  var fichier = modeleChoisi.fichier;
   if (!fichier) { status.textContent = 'Choisissez un modele'; return; }
-  nomModeleCourant = selectModele.options[selectModele.selectedIndex].textContent;
+  nomModeleCourant = modeleChoisi.nom;
   historique = []; refaire = [];
 
   modeBureau = true;
