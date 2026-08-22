@@ -4,7 +4,15 @@ Application WebXR pour Meta Quest 3 : pose n'importe quel modèle 3D (issu
 d'une modélisation 3DEXPERIENCE) sur une vraie table, manipule-le à main
 levée ou précisément, et colore ses pièces.
 
+**Adresse fixe (à taper dans Wolvic) : https://gmpbordeaux.fr/gmp-visu-vr/**
+
 ## Lancer l'application
+
+**En ligne (recommandé)** : ouvre directement
+`https://gmpbordeaux.fr/gmp-visu-vr/` dans Wolvic sur le Quest 3. Rien à
+allumer sur le PC.
+
+**En local (pour tester une modification avant de la publier)** :
 
 > ⚠️ Ce projet utilise le **port 8080**, comme VR CEC et VR Statique. Ne
 > lance qu'une application à la fois. Si une autre tourne encore, le
@@ -12,8 +20,7 @@ levée ou précisément, et colore ses pièces.
 
 1. Double-clique sur **`serveur.bat`**.
 2. Une adresse `https://xxxxx.trycloudflare.com` s'affiche.
-3. Tape cette adresse dans Wolvic sur le Quest 3 (ou ouvre directement
-   l'adresse GitHub Pages une fois le projet publié en ligne).
+3. Tape cette adresse dans Wolvic sur le Quest 3.
 4. Choisis un modèle dans la liste, puis appuie sur « Entrer en réalité
    mixte ».
 
@@ -64,13 +71,16 @@ logiciel gratuit : **FreeCAD**.
 > par pièce. Utilise l'onglet COULEUR (manuel ou « COLORIER AUTO ») pour
 > distinguer les pièces une fois dans le casque.
 
-## Publier en ligne (GitHub Pages)
+## Publier une mise à jour en ligne (GitHub Pages)
 
-Comme pour les autres projets, l'hébergement définitif se fait sur
-**GitHub Pages** : une adresse fixe, mise à jour par un simple
-`git push`, sans avoir besoin d'allumer le PC ni de lancer `serveur.bat`
-à chaque fois. Demande à Claude de configurer ça quand tu es prêt·e à
-publier.
+Le projet est hébergé sur **GitHub Pages**, adresse fixe
+`https://gmpbordeaux.fr/gmp-visu-vr/` :
+- Dépôt : https://github.com/AntoineP3371/gmp-visu-vr (public), branche `main`
+- Pour mettre à jour le site après avoir modifié un fichier :
+  `git add -A && git commit -m "..." && git push`, puis attendre ~1 minute.
+- Pense à changer le `?v=X.Y.Z` dans `index.html` (script `app.js`) à
+  chaque nouvelle version, sinon Wolvic garde l'ancienne version en cache
+  jusqu'à 10 minutes.
 
 ## Fichiers
 
