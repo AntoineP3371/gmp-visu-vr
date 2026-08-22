@@ -1342,6 +1342,32 @@ function centresRoue(list) {
   }
   return out;
 }
+// Identifiant STABLE d'un noeud, utilise pour comparer "ce qui est vise" au
+// fil des frames - un simple === sur l'objet ne marche pas pour les listes
+// regenerees a chaque appel (palette figee mais mesures reconstruites a
+// chaque fois : 2 objets differents pour la MEME mesure d'un appel a l'autre).
+function identifiantNoeud(node) {
+  if (node === 'back') return 'back';
+  if (!node) return null;
+  if (node.couleur !== undefined) return 'coul-' + node.idx;
+  if (node.mesureId !== undefined) return 'mes-' + node.mesureId;
+  return 'lbl-' + node.label;
+}
+var idHoverRoue = null;
+// Sonde chaque frame (pas seulement au clic) ce que l'AUTRE manette (celle
+// qui ne porte pas le menu) vise sur le disque, pour le mettre en
+// surbrillance AVANT que l'utilisateur appuie sur la gachette.
+function pollSurvolRoue() {
+  if (!roue.visible) {
+    if (idHoverRoue !== null) { idHoverRoue = null; majPanneau(); }
+    return;
+  }
+  var ray = rayonDe(controllers[1 - menuCtrlIdx]);
+  var hits = ray.intersectObject(roue, false);
+  var nouvelId = (hits.length && hits[0].uv) ? identifiantNoeud(zoneRoue(hits[0].uv)) : null;
+  if (nouvelId !== idHoverRoue) { idHoverRoue = nouvelId; majPanneau(); }
+}
+
 function estActifRoue(node) {
   if (node.mesureId !== undefined) return node.mesureId === mesureActiveId;
   switch (node.label) {
@@ -1368,12 +1394,14 @@ function dessinerRoue() {
 
   var list = noeudsRoue();
   centresRoue(list).forEach(function (p) {
+    var survole = idHoverRoue !== null && identifiantNoeud(p.node) === idHoverRoue;
     if (p.node.couleur !== undefined) {
       rctx.fillStyle = hex(p.node.couleur);
       cerclePlein(p.x, p.y, RNODE / 2); rctx.fill();
       rctx.strokeStyle = (p.node.idx === couleurIdx) ? '#ffee00' : '#3a4553';
       rctx.lineWidth = (p.node.idx === couleurIdx) ? 5 : 2;
       cerclePlein(p.x, p.y, RNODE / 2); rctx.stroke();
+      if (survole) { rctx.strokeStyle = '#ffffff'; rctx.lineWidth = 6; cerclePlein(p.x, p.y, RNODE / 2 + 8); rctx.stroke(); }
       return;
     }
     var actif = estActifRoue(p.node);
@@ -1382,6 +1410,10 @@ function dessinerRoue() {
     rctx.strokeStyle = actif ? '#ffee00' : '#3a4553';
     rctx.lineWidth = actif ? 5 : 2;
     cerclePlein(p.x, p.y, RNODE / 2); rctx.stroke();
+    // Surbrillance de VISEE (distincte du "actif" ci-dessus) : un anneau
+    // blanc supplementaire, plus grand, pour qu'on voie TOUJOURS lequel le
+    // rayon vise en ce moment - avant meme d'appuyer sur la gachette.
+    if (survole) { rctx.strokeStyle = '#ffffff'; rctx.lineWidth = 6; cerclePlein(p.x, p.y, RNODE / 2 + 8); rctx.stroke(); }
     rctx.fillStyle = '#fff'; rctx.textAlign = 'center';
     var texteNoeud = p.node.texte || p.node.label;
     var mots = texteNoeud.split(' ');
@@ -1404,9 +1436,12 @@ function dessinerRoue() {
     }
   });
 
+  var survoleHub = idHoverRoue === 'back';
   cerclePlein(c, c, RHUB);
-  rctx.fillStyle = 'rgba(28,34,44,0.96)'; rctx.fill();
-  rctx.strokeStyle = '#2f8fd6'; rctx.lineWidth = 2; cerclePlein(c, c, RHUB); rctx.stroke();
+  rctx.fillStyle = survoleHub ? 'rgba(50,70,95,0.98)' : 'rgba(28,34,44,0.96)'; rctx.fill();
+  rctx.strokeStyle = survoleHub ? '#ffffff' : '#2f8fd6';
+  rctx.lineWidth = survoleHub ? 5 : 2;
+  cerclePlein(c, c, RHUB); rctx.stroke();
   rctx.fillStyle = '#fff'; rctx.font = 'bold 16px sans-serif'; rctx.textAlign = 'center';
   rctx.fillText(roueStack.length ? '< RETOUR' : 'MENU', c, c + 6);
 
@@ -1572,25 +1607,110 @@ function pollUndoRedoJoystick() {
   });
 }
 
-// Laser rouge de presentation : visible tant que la gachette est tenue,
-// s'arrete pile sur la piece visee (point rouge). Independant de l'action
-// que la gachette declenche par ailleurs (peindre, glisser le gizmo...).
+// Laser + pointeur : visibles EN PERMANENCE des que le modele est charge
+// (plus seulement gachette tenue). Avant, comme l'action (peindre/mesurer/
+// RAZ...) se declenche DES l'appui de la gachette, le laser n'apparaissait
+// qu'au moment meme du clic - trop tard pour "voir ce qu'on vise" avant
+// d'agir, cause probable du retour "on voit mal ce que vise la manette".
+// Trait plus discret hors gachette tenue, pleine intensite pendant (glisser
+// un gizmo, etc.) pour distinguer visuellement les deux etats.
 var selectTenu = [false, false];
+var pieceSurvolee          = [null, null]; // mesh individuel actuellement vise, par manette
+var objetSurvolePrecedent  = [null, null]; // poignee/bouton RAZ du gizmo actuellement vise
+var ECHELLE_SURVOL = 1.3;
+
+// Surbrillance d'un MESH individuel (teinte emissive) - au niveau du mesh et
+// non de la "piece racine", pour marcher meme sur un modele sans piecesMobiles
+// (comme le modele de demo) et parce que colorer/mesurer visent deja le mesh.
+// Ignoree si ce mesh appartient a une piece deja selectionnee (A+gachette),
+// dont la teinte ambre de selection ne doit pas etre ecrasee.
+function appliquerSurvolPiece(idx, mesh) {
+  var precedent = pieceSurvolee[idx];
+  if (precedent && precedent !== mesh) {
+    var autreIdx = 1 - idx;
+    var encoreVise = pieceSurvolee[autreIdx] === precedent;
+    var estSelectionne = selection.indexOf(trouverPieceRacine(precedent)) !== -1;
+    if (!encoreVise && !estSelectionne) {
+      var matsPrec = Array.isArray(precedent.material) ? precedent.material : [precedent.material];
+      matsPrec.forEach(function (m) { if (m.emissive) m.emissive.setHex(0x000000); });
+    }
+  }
+  pieceSurvolee[idx] = mesh;
+  if (mesh && selection.indexOf(trouverPieceRacine(mesh)) === -1) {
+    var mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    mats.forEach(function (m) { if (m.emissive) m.emissive.setHex(0x2255aa); });
+  }
+}
+
+// Surbrillance d'une poignee/bouton RAZ du gizmo : agrandissement (marche
+// meme quand le materiau est PARTAGE entre plusieurs instances, comme les
+// boutons RAZ - modifier sa couleur/opacite affecterait les 6 a la fois,
+// modifier .scale ne touche QUE l'objet vise) + boost d'opacite du halo
+// SEULEMENT s'il a son propre materiau (les halos de fleche/anneau, pas
+// les sprites RAZ).
+function restaurerSurvolObjet(objet) {
+  if (objet.userData.echelleBase) objet.scale.copy(objet.userData.echelleBase);
+  if (objet.userData.opaciteBase !== undefined) objet.material.opacity = objet.userData.opaciteBase;
+}
+function appliquerSurvolObjet(idx, objet) {
+  var precedent = objetSurvolePrecedent[idx];
+  if (precedent && precedent !== objet) {
+    var autreIdx = 1 - idx;
+    if (objetSurvolePrecedent[autreIdx] !== precedent) restaurerSurvolObjet(precedent);
+  }
+  objetSurvolePrecedent[idx] = objet;
+  if (objet) {
+    if (!objet.userData.echelleBase) objet.userData.echelleBase = objet.scale.clone();
+    objet.scale.copy(objet.userData.echelleBase).multiplyScalar(ECHELLE_SURVOL);
+    if (objet.isMesh) {
+      if (objet.userData.opaciteBase === undefined) objet.userData.opaciteBase = objet.material.opacity;
+      objet.material.opacity = Math.min(1, objet.userData.opaciteBase * 2.5 + 0.15);
+    }
+  }
+}
+
 function majLaser(idx) {
   var ctrl = controllers[idx];
   var laser = ctrl.userData.laser, point = ctrl.userData.pointeurLaser;
   ctrl.userData.pieceLaser = null;
-  if (!selectTenu[idx] || !carPret) { laser.visible = false; point.visible = false; return; }
+  if (!carPret || !anchorPlaced) {
+    laser.visible = false; point.visible = false;
+    appliquerSurvolPiece(idx, null);
+    appliquerSurvolObjet(idx, null);
+    return;
+  }
   var ray = rayonDe(ctrl);
-  var hits = ray.intersectObjects(pieces, false);
+
+  // Cibles pointables : les pieces + les poignees/RAZ du gizmo actuellement
+  // affiche (sinon impossible de survoler un bouton RAZ avant de cliquer).
+  var ciblesGizmo = [];
+  if (gizmoTranslate.visible) {
+    poignees.forEach(function (pg) { if (pg.type === 'translate' || pg.type === 'raz-t') ciblesGizmo.push(pg.mesh); });
+  }
+  if (gizmoRotate.visible) {
+    poignees.forEach(function (pg) { if (pg.type === 'rotate' || pg.type === 'raz-r') ciblesGizmo.push(pg.mesh); });
+  }
+  var hits = ray.intersectObjects(ciblesGizmo.concat(pieces), false);
+
   laser.visible = true;
+  laser.material.opacity = selectTenu[idx] ? 0.9 : 0.4;
   laser.scale.z = hits.length ? hits[0].distance : 3;
   point.visible = hits.length > 0;
-  if (hits.length) {
-    point.position.copy(hits[0].point);
-    // Piece visee par le laser (independamment de toute selection A+gachette)
-    // - sert au reglage de transparence au laser (joystick haut/bas).
-    ctrl.userData.pieceLaser = trouverPieceRacine(hits[0].object);
+
+  if (!hits.length) {
+    appliquerSurvolPiece(idx, null);
+    appliquerSurvolObjet(idx, null);
+    return;
+  }
+  var objet = hits[0].object;
+  point.position.copy(hits[0].point);
+  if (pieces.indexOf(objet) !== -1) {
+    ctrl.userData.pieceLaser = trouverPieceRacine(objet);
+    appliquerSurvolPiece(idx, objet);
+    appliquerSurvolObjet(idx, null);
+  } else {
+    appliquerSurvolObjet(idx, objet);
+    appliquerSurvolPiece(idx, null);
   }
 }
 
@@ -1788,6 +1908,7 @@ renderer.setAnimationLoop(function (time, frame) {
   if (!modeBureau) {
     pollAppelRoue();
     pollUndoRedoJoystick();
+    pollSurvolRoue();
     controllers.forEach(function (ctrl, ci) {
       majLaser(ci);
       var gp = ctrl.userData.src && ctrl.userData.src.gamepad;
@@ -1882,6 +2003,9 @@ function reinitialiserApresSession() {
   pieces = [];
   piecesMobiles = [];
   carPret = false;
+  pieceSurvolee = [null, null];
+  objetSurvolePrecedent = [null, null];
+  idHoverRoue = null;
 }
 
 // ============================================================================

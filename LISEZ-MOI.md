@@ -1,4 +1,4 @@
-# Visionneuse CAO en réalité mixte — v1.7.0
+# Visionneuse CAO en réalité mixte — v1.8.0
 
 Application WebXR pour Meta Quest 3 : pose n'importe quel modèle 3D (issu
 d'une modélisation 3DEXPERIENCE) sur une vraie table, manipule-le à main
@@ -32,6 +32,13 @@ rayon de l'AUTRE manette et on valide à la **gâchette** ; le centre du
 disque sert de bouton RETOUR pour remonter d'un niveau. **Le menu ne revient
 JAMAIS en arrière tout seul après une action** : il faut toujours appuyer
 sur « < RETOUR » (le centre du disque) pour remonter, à chaque niveau.
+
+**Le rayon (laser) des manettes est maintenant TOUJOURS visible** (plus
+seulement gâchette tenue), et **ce qui est visé se met en surbrillance** :
+un bouton du disque prend un anneau blanc, une pièce se teinte en bleu, un
+bouton RAZ ou une flèche/anneau du gizmo grossit légèrement - dans tous les
+cas, tu sais ce que tu es sur le point de cliquer AVANT d'appuyer sur la
+gâchette.
 
 **Arborescence du menu :**
 - **Couleurs** → Automatique / Manuel (ouvre directement la palette) / RAZ
