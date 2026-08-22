@@ -1,4 +1,4 @@
-# Visionneuse CAO en réalité mixte — v1.12.0
+# Visionneuse CAO en réalité mixte — v1.13.0
 
 Application WebXR pour Meta Quest 3 : pose n'importe quel modèle 3D (issu
 d'une modélisation 3DEXPERIENCE) sur une vraie table, manipule-le à main
@@ -69,7 +69,7 @@ gâchette.
 | **Mesurer une distance** (menu Mesures) | Vise un 1er point puis un 2e avec la **gâchette** : ligne + distance réelle en mm affichées (indépendant du zoom en cours) - chaque mesure est gardée dans l'historique et **suit le modèle** (et chaque pièce déplacée indépendamment) si tu le bouges ensuite |
 | **Revoir une mesure déjà prise** | Menu Mesures : la liste affiche toutes les mesures (une seule à l'écran à la fois), clique sur une entrée pour la rappeler |
 | **Effacer une mesure** | Vise la petite croix rouge en haut à droite de sa case, **gâchette** - la retire de l'historique |
-| **Prendre une photo** (menu Capture > Cadre) | Oriente la pièce face à toi, choisis Cadre : un cadre jaune apparaît (aperçu de ce qui sera capturé). Le prochain appui sur la **gâchette** (n'importe laquelle) déclenche un **flash blanc** puis affiche un aperçu flottant ; reclic dessus pour le fermer. Si Google Drive est configuré (voir plus bas), la photo est aussi **envoyée automatiquement** dans le dossier Drive dédié |
+| **Prendre une photo** (menu Capture > Cadre) | Choisis Cadre : un texte qui suit ton regard s'affiche (« Regardez ce que vous voulez prendre en photo et appuyez sur la gâchette »). Le prochain appui sur la **gâchette** (n'importe laquelle) déclenche un **flash blanc** puis affiche un aperçu flottant ; reclic dessus pour le fermer. **Le texte n'apparaît jamais sur la photo enregistrée**. Si Google Drive est configuré (voir plus bas), la photo est aussi **envoyée automatiquement** dans le dossier Drive dédié |
 | **Annuler / Refaire** | Menu Actions, **ou** pousse le **joystick à gauche/droite** de la manette **qui porte le menu** (l'autre manette n'a plus d'effet sur le joystick). Une étiquette confirme l'action pendant 1 seconde (« ANNULÉ : déplacement », etc.) |
 
 L'application s'ouvre toujours **modèle entier** sélectionné, pas de menu

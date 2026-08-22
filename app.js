@@ -1315,18 +1315,42 @@ var fondCapture = 'ar';  // 'ar' (transparent) ou 'vr' (bleu GMP)
 var COULEUR_FOND_VR = 0x2f8fd6;
 
 var modePhoto = false;
-var cadrePhoto = new THREE.LineLoop(
-  new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(-0.06, -0.045, 0), new THREE.Vector3(0.06, -0.045, 0),
-    new THREE.Vector3(0.06, 0.045, 0),   new THREE.Vector3(-0.06, 0.045, 0)
-  ]),
-  new THREE.LineBasicMaterial({ color: 0xffee00, depthTest: false })
-);
-cadrePhoto.renderOrder = 1300;
-cadrePhoto.visible = false;
-
 var camPhoto = new THREE.PerspectiveCamera(60, 4 / 3, 0.01, 20);
 var previewPhoto = null;
+
+// Texte d'aide en mode "Cadre", attache a la CAMERA (suit toujours le regard,
+// contrairement a l'ancien cadre jaune fixe sur une manette). Statique (pas
+// besoin de redessiner a chaque frame), mais cache PENDANT la passe de
+// capture hors-ecran de capturerPhoto() - donc n'apparait jamais sur la
+// photo enregistree, meme si le texte est visible en continu a l'ecran.
+var APC_W = 820, APC_H = 120;
+var apc = document.createElement('canvas');
+apc.width = APC_W; apc.height = APC_H;
+var apctx = apc.getContext('2d');
+var texAidePhoto = new THREE.CanvasTexture(apc);
+var textePhoto = new THREE.Sprite(new THREE.SpriteMaterial({ map: texAidePhoto, depthTest: false, transparent: true }));
+textePhoto.scale.set(0.42, 0.42 * APC_H / APC_W, 1);
+textePhoto.position.set(0, -0.15, -0.4);
+textePhoto.renderOrder = 1999;
+textePhoto.visible = false;
+camera.add(textePhoto);
+rr(apctx, 2, 2, APC_W - 4, APC_H - 4, 18); apctx.fillStyle = 'rgba(20,20,20,0.85)'; apctx.fill();
+rr(apctx, 2, 2, APC_W - 4, APC_H - 4, 18); apctx.strokeStyle = '#ffee00'; apctx.lineWidth = 3; apctx.stroke();
+apctx.fillStyle = '#ffee00';
+apctx.textAlign = 'center'; apctx.textBaseline = 'middle';
+// Reduit la police si besoin pour que les 2 lignes ne soient jamais coupees,
+// quelles que soient les metriques de police du navigateur/systeme.
+var lignes = ['Regardez ce que vous voulez prendre en photo', 'et appuyez sur la gachette'];
+var taillePolice = 26;
+do {
+  apctx.font = 'bold ' + taillePolice + 'px sans-serif';
+  var largeurMax = Math.max(apctx.measureText(lignes[0]).width, apctx.measureText(lignes[1]).width);
+  if (largeurMax <= APC_W - 40) break;
+  taillePolice -= 1;
+} while (taillePolice > 12);
+apctx.fillText(lignes[0], APC_W / 2, APC_H / 2 - 16);
+apctx.fillText(lignes[1], APC_W / 2, APC_H / 2 + 16);
+texAidePhoto.needsUpdate = true;
 
 // Flash blanc plein ecran simulant une prise de photo - un quad attache a
 // la CAMERA (donc toujours "devant les yeux" quelle que soit la direction du
@@ -1392,8 +1416,8 @@ function majIndicateurAction(tempsActuel) {
   if (indicAction.visible && tempsActuel > indicActionJusqua) indicAction.visible = false;
 }
 
-function entrerModePhoto() { modePhoto = true; cadrePhoto.visible = true; }
-function sortirModePhoto() { modePhoto = false; cadrePhoto.visible = false; }
+function entrerModePhoto() { modePhoto = true; textePhoto.visible = true; }
+function sortirModePhoto() { modePhoto = false; textePhoto.visible = false; }
 
 function fermerApercuPhoto() {
   if (!previewPhoto) return;
@@ -1447,8 +1471,8 @@ function capturerPhoto() {
   camPhoto.updateMatrixWorld(true);
 
   var visRoue = roue.visible, visGT = gizmoTranslate.visible, visGR = gizmoRotate.visible;
-  var visCadre = cadrePhoto.visible, visMarq = marqueursValeur.map(function (m) { return m.sprite.visible; });
-  roue.visible = false; gizmoTranslate.visible = false; gizmoRotate.visible = false; cadrePhoto.visible = false;
+  var visTexte = textePhoto.visible, visMarq = marqueursValeur.map(function (m) { return m.sprite.visible; });
+  roue.visible = false; gizmoTranslate.visible = false; gizmoRotate.visible = false; textePhoto.visible = false;
 
   var rt = new THREE.WebGLRenderTarget(L, H);
   var xrEtait = renderer.xr.enabled;
@@ -1465,7 +1489,7 @@ function capturerPhoto() {
   renderer.setClearColor(couleurAvant, alphaAvant);
   renderer.xr.enabled = xrEtait;
 
-  roue.visible = visRoue; gizmoTranslate.visible = visGT; gizmoRotate.visible = visGR; cadrePhoto.visible = visCadre;
+  roue.visible = visRoue; gizmoTranslate.visible = visGT; gizmoRotate.visible = visGR; textePhoto.visible = visTexte;
 
   var buf = new Uint8Array(L * H * 4);
   renderer.readRenderTargetPixels(rt, 0, 0, L, H, buf);
@@ -1984,7 +2008,6 @@ controllers.forEach(function (ctrl, idx) {
   // de connaitre la vraie latéralité), puis recale sur la VRAIE main gauche
   // des que WebXR la signale (handedness n'est connu qu'a la connexion).
   if (idx === 0) { ctrl.add(roue); roue.position.set(0, 0.06, -0.04); roue.rotation.x = -0.5; }
-  if (idx === 1) { ctrl.add(cadrePhoto); cadrePhoto.position.set(0, 0, -0.16); }
 
   ctrl.addEventListener('connected', function (e) {
     ctrl.userData.src = e.data;
@@ -1993,9 +2016,6 @@ controllers.forEach(function (ctrl, idx) {
       ctrl.add(roue);
       roue.position.set(0, 0.06, -0.04);
       roue.rotation.x = -0.5;
-    } else if (e.data.handedness === 'right' && cadrePhoto.parent !== ctrl) {
-      ctrl.add(cadrePhoto);
-      cadrePhoto.position.set(0, 0, -0.16);
     }
   });
   ctrl.addEventListener('disconnected', function ()  { ctrl.userData.src = null; });
