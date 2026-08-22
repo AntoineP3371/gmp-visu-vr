@@ -361,14 +361,15 @@ function restaurerOpaciteDe(pieces_) {
     });
   });
 }
-function appliquerTransparenceSelection(opacite) {
-  selection.forEach(function (piece) {
-    piece.traverse(function (o) {
-      if (!o.isMesh) return;
-      var mats = Array.isArray(o.material) ? o.material : [o.material];
-      mats.forEach(function (m) { m.transparent = true; m.opacity = opacite; });
-    });
+function appliquerTransparencePiece(piece, opacite) {
+  piece.traverse(function (o) {
+    if (!o.isMesh) return;
+    var mats = Array.isArray(o.material) ? o.material : [o.material];
+    mats.forEach(function (m) { m.transparent = true; m.opacity = opacite; });
   });
+}
+function appliquerTransparenceSelection(opacite) {
+  selection.forEach(function (piece) { appliquerTransparencePiece(piece, opacite); });
 }
 
 function relacherSelection() {
@@ -731,8 +732,12 @@ rzctx.fillText('RAZ', 32, 34);
 var matBoutonRAZ = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(rzc), depthTest: false, transparent: true });
 function creerBoutonRAZ() {
   var s = new THREE.Sprite(matBoutonRAZ);
-  s.scale.set(0.03, 0.03, 0.03);
-  s.renderOrder = 999;
+  s.scale.set(0.022, 0.022, 0.022);
+  // Superpose au coin de la case de valeur (renderOrder 999) : DOIT etre
+  // strictement plus eleve, sinon les deux sprites depthTest:false ont un
+  // ordre de tri par distance camera quasi identique (ils sont presque au
+  // meme endroit) qui peut s'inverser d'une frame a l'autre -> clignotement.
+  s.renderOrder = 1000;
   return s;
 }
 
@@ -962,8 +967,13 @@ function definirMode(m) {
 //  et rappelable depuis le sous-menu "Mesures" de la roue - une seule mesure
 //  est affichee dans la scene a la fois. Une petite croix, superposee en haut
 //  a droite de la case, supprime la mesure actuellement affichee.
+//  Chaque point est enregistre en coordonnees LOCALES par rapport a la piece
+//  visee au clic (pas en coordonnees monde figees) : la mesure SUIT donc le
+//  modele (et chaque piece deplacee independamment) a chaque deplacement,
+//  zoom ou RAZ - la distance affichee est recalculee EN DIRECT, chaque frame,
+//  a partir de la position monde ACTUELLE de la/les piece(s) mesuree(s).
 // ============================================================================
-var mesures         = [];    // historique complet : { id, p0, p1, distanceMm }
+var mesures         = [];    // historique complet : { id, p0: {mesh,local}, p1: {mesh,local} }
 var mesureIdSuivant  = 1;
 var mesureActiveId   = null; // id de la mesure actuellement affichee (ou null)
 var mesureEnCours    = [];   // points deja poses pour la mesure en train d'etre prise
@@ -992,10 +1002,41 @@ function creerCroix() {
 function majPositionCroixMesure() {
   positionnerBoutonCoin(mesureCroix, mesureLabel, 0.046, 0.015);
 }
-function distanceReelleMm(p0, p1) {
+// Position monde ACTUELLE d'un point de mesure, recalculee a partir de la
+// piece a laquelle il est rattache (peut avoir bouge depuis la prise).
+function pointMondeMesure(pt) {
+  return pt.mesh.localToWorld(pt.local.clone());
+}
+function distanceMesureActuelle(m) {
+  var p0 = pointMondeMesure(m.p0), p1 = pointMondeMesure(m.p1);
   // Independante du zoom d'affichage courant : cf pourcentageEchelle(),
   // meme logique de conversion (echelle initiale x zoom courant).
   return (p0.distanceTo(p1) / (echelleInitiale * pivot.scale.x)) * 1000;
+}
+
+// Etiquette de distance avec son propre canvas (comme creerMarqueurAxe) -
+// necessaire pour pouvoir redessiner le texte chaque frame (la distance
+// change en direct si la/les piece(s) mesuree(s) bougent).
+function creerEtiquetteMesure() {
+  var c = document.createElement('canvas');
+  c.width = 220; c.height = 76;
+  var cx = c.getContext('2d');
+  var tex = new THREE.CanvasTexture(c);
+  var s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+  s.scale.set(0.1, 0.1 * 76 / 220, 1);
+  s.renderOrder = 1401;
+  s.userData.canvas = c; s.userData.ctx = cx; s.userData.tex = tex;
+  return s;
+}
+function dessinerEtiquetteMesure(s, texte) {
+  var c = s.userData.canvas, cx = s.userData.ctx;
+  cx.clearRect(0, 0, c.width, c.height);
+  rr(cx, 2, 2, c.width - 4, c.height - 4, 14); cx.fillStyle = 'rgba(20,20,20,0.92)'; cx.fill();
+  rr(cx, 2, 2, c.width - 4, c.height - 4, 14); cx.strokeStyle = '#ffee00'; cx.lineWidth = 3; cx.stroke();
+  cx.fillStyle = '#ffee00'; cx.font = 'bold 30px sans-serif';
+  cx.textAlign = 'center'; cx.textBaseline = 'middle';
+  cx.fillText(texte, c.width / 2, c.height / 2 + 3);
+  s.userData.tex.needsUpdate = true;
 }
 
 // Enleve les objets 3D de la mesure actuellement AFFICHEE (pas l'historique).
@@ -1016,47 +1057,60 @@ function effacerMesure() {
 }
 
 function afficherMesureParId(id) {
-  var m = null;
-  for (var i = 0; i < mesures.length; i++) { if (mesures[i].id === id) { m = mesures[i]; break; } }
-  if (!m) return;
+  var existe = mesures.some(function (m) { return m.id === id; });
+  if (!existe) return;
   nettoyerAffichageMesure();
   mesureActiveId = id;
 
-  [m.p0, m.p1].forEach(function (pt) {
+  [0, 1].forEach(function () {
     var marqueur = new THREE.Mesh(
       new THREE.SphereGeometry(0.006, 10, 10),
       new THREE.MeshBasicMaterial({ color: 0xffee00, depthTest: false })
     );
-    marqueur.position.copy(pt);
     marqueur.renderOrder = 1399;
     scene.add(marqueur);
     mesurePointMarkers.push(marqueur);
   });
 
-  var geo = new THREE.BufferGeometry().setFromPoints([m.p0, m.p1]);
+  var geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
   mesureLigne = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffee00, depthTest: false }));
   mesureLigne.renderOrder = 1400;
   scene.add(mesureLigne);
 
-  var mc = document.createElement('canvas'); mc.width = 220; mc.height = 76;
-  var mctx = mc.getContext('2d');
-  rr(mctx, 2, 2, 216, 72, 14); mctx.fillStyle = 'rgba(20,20,20,0.92)'; mctx.fill();
-  rr(mctx, 2, 2, 216, 72, 14); mctx.strokeStyle = '#ffee00'; mctx.lineWidth = 3; mctx.stroke();
-  mctx.fillStyle = '#ffee00'; mctx.font = 'bold 30px sans-serif';
-  mctx.textAlign = 'center'; mctx.textBaseline = 'middle';
-  mctx.fillText(m.distanceMm.toFixed(1) + ' mm', 110, 39);
-  var texM = new THREE.CanvasTexture(mc);
-  mesureLabel = new THREE.Sprite(new THREE.SpriteMaterial({ map: texM, depthTest: false, transparent: true }));
-  mesureLabel.scale.set(0.1, 0.1 * 76 / 220, 1);
-  mesureLabel.position.copy(m.p0).add(m.p1).multiplyScalar(0.5);
-  mesureLabel.renderOrder = 1401;
+  mesureLabel = creerEtiquetteMesure();
   scene.add(mesureLabel);
 
   mesureCroix = creerCroix();
   scene.add(mesureCroix);
-  majPositionCroixMesure();
 
+  majAffichageMesureActive();
   majPanneau();
+}
+
+// Appele CHAQUE FRAME (tant qu'une mesure est affichee) : recalcule les
+// positions monde des 2 points a partir de leur piece (qui a pu bouger) et
+// redessine la ligne/l'etiquette/la croix en consequence.
+function majAffichageMesureActive() {
+  if (mesureActiveId == null) return;
+  var m = null;
+  for (var i = 0; i < mesures.length; i++) { if (mesures[i].id === mesureActiveId) { m = mesures[i]; break; } }
+  if (!m) return;
+  var p0 = pointMondeMesure(m.p0), p1 = pointMondeMesure(m.p1);
+
+  mesurePointMarkers[0].position.copy(p0);
+  mesurePointMarkers[1].position.copy(p1);
+
+  var pos = mesureLigne.geometry.attributes.position;
+  pos.setXYZ(0, p0.x, p0.y, p0.z);
+  pos.setXYZ(1, p1.x, p1.y, p1.z);
+  pos.needsUpdate = true;
+  mesureLigne.geometry.computeBoundingSphere();
+
+  var distanceMm = (p0.distanceTo(p1) / (echelleInitiale * pivot.scale.x)) * 1000;
+  dessinerEtiquetteMesure(mesureLabel, distanceMm.toFixed(1) + ' mm');
+  mesureLabel.position.copy(p0).add(p1).multiplyScalar(0.5);
+
+  majPositionCroixMesure();
 }
 
 // Clic sur la croix : supprime la mesure affichee DE L'HISTORIQUE (pas
@@ -1085,21 +1139,23 @@ function mesurePrecedente() {
 }
 
 function gererClicMesure(inter) {
-  var pt = inter.point.clone();
+  // Point enregistre en LOCAL par rapport a la piece visee (pas en monde
+  // fige) : c'est ce qui permet a la mesure de suivre le modele ensuite.
+  var mesh = inter.object;
+  var local = mesh.worldToLocal(inter.point.clone());
   if (mesureEnCours.length === 0) nettoyerAffichageMesure(); // on quitte l'affichage precedent
-  mesureEnCours.push(pt);
+  mesureEnCours.push({ mesh: mesh, local: local });
   if (mesureEnCours.length === 1) {
     var marqueur = new THREE.Mesh(
       new THREE.SphereGeometry(0.006, 10, 10),
       new THREE.MeshBasicMaterial({ color: 0xffee00, depthTest: false })
     );
-    marqueur.position.copy(pt);
+    marqueur.position.copy(inter.point);
     marqueur.renderOrder = 1399;
     scene.add(marqueur);
     mesurePointMarkers.push(marqueur);
   } else {
-    var p0 = mesureEnCours[0], p1 = mesureEnCours[1];
-    var entree = { id: mesureIdSuivant++, p0: p0, p1: p1, distanceMm: distanceReelleMm(p0, p1) };
+    var entree = { id: mesureIdSuivant++, p0: mesureEnCours[0], p1: mesureEnCours[1] };
     mesures.push(entree);
     mesureEnCours = [];
     afficherMesureParId(entree.id);
@@ -1213,9 +1269,7 @@ function capturerPhoto() {
 var MENU_RACINE = [
   { label: 'Couleurs', sub: [
       { label: 'Automatique', action: colorierAutomatiquement },
-      { label: 'Manuel', action: function () { definirMode(MODE.COULEUR); }, sub: [
-          { label: 'Palette de couleurs', texte: 'Palette', couleurs: true }
-      ] },
+      { label: 'Manuel', action: function () { definirMode(MODE.COULEUR); }, couleurs: true },
       { label: 'RAZ', action: reinitialiserCouleurs }
   ] },
   { label: 'Deplacements', sub: [
@@ -1275,7 +1329,7 @@ function noeudsRoue() {
     // ouverture puisque de nouvelles mesures peuvent avoir ete prises entre
     // temps (pas de cache, contrairement a la palette qui ne change jamais).
     return mesures.map(function (m, i) {
-      return { label: (i + 1) + ' : ' + m.distanceMm.toFixed(0) + ' mm', mesureId: m.id };
+      return { label: (i + 1) + ' : ' + distanceMesureActuelle(m).toFixed(0) + ' mm', mesureId: m.id };
     });
   }
   return v ? v.sub : MENU_RACINE;
@@ -1379,7 +1433,7 @@ function traiterClicRoue(zone) {
   if (zone.couleur !== undefined) { couleurIdx = zone.idx; majPanneau(); return; }
   if (zone.mesureId !== undefined) { afficherMesureParId(zone.mesureId); return; }
   if (zone.action) zone.action();
-  if (zone.sub || zone.mesures) roueStack.push(zone);
+  if (zone.sub || zone.mesures || zone.couleurs) roueStack.push(zone);
   majPanneau();
 }
 
@@ -1500,6 +1554,24 @@ function pollAppelRoue() {
   });
 }
 
+// Annuler/Refaire au joystick gauche/droite (axes[2] = axe X du pouce, sur
+// les 2 manettes) - un seul declenchement par poussee (rearme quand le
+// joystick revient pres du centre), pour ne pas annuler 60 fois par seconde
+// tant qu'on le maintient. Reste egalement disponible dans le menu Actions.
+var UNDO_REDO_SEUIL = 0.6;
+var undoRedoArme = [true, true];
+function pollUndoRedoJoystick() {
+  controllers.forEach(function (ctrl, i) {
+    var gp = ctrl.userData.src && ctrl.userData.src.gamepad;
+    var x = (gp && gp.axes && gp.axes.length > 2) ? (gp.axes[2] || 0) : 0;
+    if (Math.abs(x) < UNDO_REDO_SEUIL * 0.5) { undoRedoArme[i] = true; return; }
+    if (!undoRedoArme[i]) return;
+    undoRedoArme[i] = false;
+    if (x <= -UNDO_REDO_SEUIL) annuler();
+    else if (x >= UNDO_REDO_SEUIL) retablir();
+  });
+}
+
 // Laser rouge de presentation : visible tant que la gachette est tenue,
 // s'arrete pile sur la piece visee (point rouge). Independant de l'action
 // que la gachette declenche par ailleurs (peindre, glisser le gizmo...).
@@ -1507,13 +1579,19 @@ var selectTenu = [false, false];
 function majLaser(idx) {
   var ctrl = controllers[idx];
   var laser = ctrl.userData.laser, point = ctrl.userData.pointeurLaser;
+  ctrl.userData.pieceLaser = null;
   if (!selectTenu[idx] || !carPret) { laser.visible = false; point.visible = false; return; }
   var ray = rayonDe(ctrl);
   var hits = ray.intersectObjects(pieces, false);
   laser.visible = true;
   laser.scale.z = hits.length ? hits[0].distance : 3;
   point.visible = hits.length > 0;
-  if (hits.length) point.position.copy(hits[0].point);
+  if (hits.length) {
+    point.position.copy(hits[0].point);
+    // Piece visee par le laser (independamment de toute selection A+gachette)
+    // - sert au reglage de transparence au laser (joystick haut/bas).
+    ctrl.userData.pieceLaser = trouverPieceRacine(hits[0].object);
+  }
 }
 
 controllers.forEach(function (ctrl, idx) {
@@ -1659,7 +1737,13 @@ renderer.setAnimationLoop(function (time, frame) {
 
   if (modeZoom) majZoom();
   if (dragEtat) { if (dragEtat.mode === 'translate') majDragTranslate(); else majDragRotate(); }
-  if (mesureCroix) majPositionCroixMesure();
+  if (mesureActiveId != null) {
+    // Une piece a pu bouger juste au-dessus (grip, zoom, glissement gizmo) :
+    // sans ce rafraichissement la mesure lirait une matrixWorld perimee d'une
+    // frame (meme piege que le mecanisme Annuler/Refaire, cf plus haut).
+    scene.updateMatrixWorld(true);
+    majAffichageMesureActive();
+  }
 
   // Gizmo : visible seulement si une cible existe, repositionne sur elle
   // chaque frame (enfant de anchor, donc taille ecran stable et toujours
@@ -1698,17 +1782,26 @@ renderer.setAnimationLoop(function (time, frame) {
   // selection elle-meme PERSISTE apres avoir relache A (cf revenirLibre) -
   // sinon la manipulation precise d'un groupe est impossible des qu'on lache
   // A pour utiliser le gizmo a la gachette.
+  // Sans rien tenir d'autre : viser une piece au laser (gachette tenue) et
+  // pousser le joystick haut/bas regle SA transparence directement, sans
+  // passer par une selection A+gachette au prealable.
   if (!modeBureau) {
     pollAppelRoue();
+    pollUndoRedoJoystick();
     controllers.forEach(function (ctrl, ci) {
+      majLaser(ci);
+      var gp = ctrl.userData.src && ctrl.userData.src.gamepad;
       if (boutonAppuye(ctrl, 4) && selection.length) {
-        var gp = ctrl.userData.src && ctrl.userData.src.gamepad;
         if (gp && gp.axes && gp.axes.length > 3) {
           var t = gp.axes[3] || 0;
           appliquerTransparenceSelection(Math.max(0.12, 1 - Math.abs(t) * 0.85));
         }
+      } else if (selectTenu[ci] && ctrl.userData.pieceLaser) {
+        var tLaser = (gp && gp.axes && gp.axes.length > 3) ? (gp.axes[3] || 0) : 0;
+        if (Math.abs(tLaser) > 0.08) {
+          appliquerTransparencePiece(ctrl.userData.pieceLaser, Math.max(0.12, 1 - Math.abs(tLaser) * 0.85));
+        }
       }
-      majLaser(ci);
     });
   }
 
