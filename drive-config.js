@@ -19,11 +19,11 @@ window.DRIVE_CONFIG = {
   // URL de l'application web Google Apps Script (se termine par /exec),
   // qui recoit les photos prises dans l'appli et les enregistre dans un
   // dossier Drive dedie. Voir apps-script-photo.gs pour le code a deployer.
-  photoUploadUrl: 'COLLE_URL_APPS_SCRIPT_ICI',
+  photoUploadUrl: 'https://script.google.com/macros/s/AKfycbzyp7_mMxmEd1MFoU5OYKaNxVpfEhnYNX0-UeT3EiQgNxOHRtyBuzxr4uhb7UsKh1IY-A/exec',
 
   // Mot de passe simple partage entre cette page et l'Apps Script, pour
   // eviter qu'un inconnu qui devinerait l'URL ne remplisse le dossier de
   // photos au hasard. Doit etre IDENTIQUE a la valeur SECRET du script
   // apps-script-photo.gs.
-  photoSecret: 'CHANGE-MOI-1234'
+  photoSecret: 'photo1234'
 };
