@@ -9,12 +9,12 @@ window.DRIVE_CONFIG = {
   // Cle API Google Drive (Google Cloud Console > APIs & Services >
   // Identifiants > Creer des identifiants > Cle API), restreinte a l'API
   // Google Drive + au site gmpbordeaux.fr. Sert a LIRE la liste des modeles.
-  apiKey: 'COLLE_TA_CLE_API_ICI',
+  apiKey: 'AIzaSyArIQfqhtnLGr_UHKGTfJWS9HazbVv7r_4',
 
   // ID du dossier Google Drive contenant les modeles .glb (partage "Toute
   // personne disposant du lien" = Lecteur). C'est la partie apres
   // /folders/ dans le lien de partage du dossier.
-  folderId: 'COLLE_ID_DOSSIER_MODELES_ICI',
+  folderId: '1tEG2yqzhOK5SIx48ZgLwR4p1I62439G0',
 
   // URL de l'application web Google Apps Script (se termine par /exec),
   // qui recoit les photos prises dans l'appli et les enregistre dans un
