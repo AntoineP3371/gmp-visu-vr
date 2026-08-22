@@ -64,7 +64,7 @@
     <button class="btn secondaire" id="btnBureau">Voir sur cet ecran (souris)</button>
     <div id="status">Chargement...</div>
     <div id="errbox"></div>
-    <div id="version">v1.5.0</div>
+    <div id="version">v1.6.0</div>
   </div>
   <canvas id="c"></canvas>
 
@@ -110,6 +110,10 @@
     </div>
     <div class="ligne section" id="secMesure">
       <span class="aide">Ctrl+clic sur un 1er point, puis un 2eme : distance reelle affichee (mm)</span>
+      <button id="bMesurePrecedente">&#9664; PRECEDENTE</button>
+      <span class="aide" id="bInfoMesures">Aucune mesure</span>
+      <button id="bMesureSuivante">SUIVANTE &#9654;</button>
+      <button id="bSupprimerMesure">SUPPRIMER</button>
     </div>
     <div class="ligne section" id="secCapture">
       <button id="bPrendrePhoto">PRENDRE UNE PHOTO</button>
@@ -133,6 +137,6 @@
 
   <script src="three.min.js"></script>
   <script src="GLTFLoader.js"></script>
-  <script src="app.js?v=1.5.0"></script>
+  <script src="app.js?v=1.6.0"></script>
 </body>
 </html>

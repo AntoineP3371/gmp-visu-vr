@@ -1,4 +1,4 @@
-# Visionneuse CAO en réalité mixte — v1.5.0
+# Visionneuse CAO en réalité mixte — v1.6.0
 
 Application WebXR pour Meta Quest 3 : pose n'importe quel modèle 3D (issu
 d'une modélisation 3DEXPERIENCE) sur une vraie table, manipule-le à main
@@ -29,12 +29,14 @@ allumer sur le PC.
 Le menu plat a été remplacé par un **disque attaché à la main gauche**
 (déplaçable sur l'autre main par un clic de joystick). On le pointe avec le
 rayon de l'AUTRE manette et on valide à la **gâchette** ; le centre du
-disque sert de bouton RETOUR pour remonter d'un niveau.
+disque sert de bouton RETOUR pour remonter d'un niveau. **Le menu ne revient
+JAMAIS en arrière tout seul après une action** : il faut toujours appuyer
+sur « < RETOUR » (le centre du disque) pour remonter, à chaque niveau.
 
 **Arborescence du menu :**
 - **Couleurs** → Automatique / Manuel (ouvre la palette) / RAZ
-- **Déplacements** → Précis (Translation / Rotation) / RAZ générale
-- **Mesures**
+- **Déplacements** → Libre / Précis (Translation / Rotation) / RAZ générale
+- **Mesures** → ouvre la liste des mesures déjà prises (pour les rappeler)
 - **Annuler / Refaire / Quitter / Remettre sur la table**
 - **Capture d'affichage** → Cadre (prendre une photo) / Fond (Réalité
   virtuelle ou Réalité augmentée)
@@ -42,19 +44,21 @@ disque sert de bouton RETOUR pour remonter d'un niveau.
 | Action | Commande |
 |---|---|
 | Poser le modèle sur la table | Vise la table, appuie sur la **gâchette** |
-| Attraper **tout le modèle** à main levée | **Grip** seul (sans rien tenir d'autre), bouge la main, relâche - marche quel que soit le menu ouvert |
+| Attraper **la cible courante** à main levée (tout le modèle, ou la sélection si une pièce/un groupe est choisi) | **Grip** seul (sans rien tenir d'autre), bouge la main, relâche - marche quel que soit le menu ouvert |
 | **Choisir une ou plusieurs pièces** à déplacer indépendamment | Maintiens le bouton **A** (ou X), et pendant que tu le tiens, vise chaque pièce avec la **gâchette** pour la (dé)sélectionner (1 pièce = suffisant, plusieurs = un groupe) |
-| Déplacer la sélection | Toujours **A tenu**, appuie en plus sur le **grip** et bouge la main |
-| Régler la transparence de la sélection | Toujours **A tenu**, pousse le **joystick** |
-| Désélectionner | **Relâche le bouton A** — retour automatique à « tout le modèle » |
+| Déplacer la sélection à main levée ou précisément | Relâche A si besoin : **la sélection reste active**, grip ou gizmo agissent dessus normalement |
+| Régler la transparence de la sélection | **A tenu**, pousse le **joystick** |
+| **Revenir à « tout le modèle »** | Bouton **« Libre »** (menu Déplacements) - désélectionne et repasse en déplacement libre |
 | **Zoomer** (avant/arrière, sur tout le modèle) | Maintiens le **grip des 2 manettes en même temps** - le % s'affiche en direct entre les 2 mains, et « s'aimante » sur 50/75/100/125/150/200% |
 | **Montrer/pointer quelque chose** | Maintiens la **gâchette appuyée** : un laser rouge s'arrête sur la pièce visée |
-| Translater / tourner précisément (menu Déplacements > Précis) | Vise une flèche ou un anneau, maintiens la **gâchette**, bouge la main, relâche - la valeur (m / degrés) reste affichée en permanence dans sa case |
-| Remettre UN axe à zéro | Vise le petit bouton **« RAZ »** à côté de la case de valeur de cet axe, **gâchette** (case et bouton sont deux objets séparés) |
+| Translater / tourner précisément (menu Déplacements > Précis) | Vise une flèche ou un anneau, maintiens la **gâchette**, bouge la main, relâche - la valeur (m / degrés) reste affichée en permanence dans sa case (fonctionne aussi sur un groupe de pièces sélectionné) |
+| Remettre UN axe à zéro | Vise le petit bouton rouge **« RAZ »**, superposé en haut à droite de la case de valeur de cet axe, **gâchette** |
 | **RAZ générale** (menu Déplacements) | Remet le modèle ENTIER à sa position d'origine, **y compris les pièces déjà déplacées individuellement ou en groupe** |
 | Déplacer le centre de rotation | Vise un point du modèle (hors flèche/anneau), **gâchette** |
 | Colorer une pièce (menu Couleurs > Manuel) | Choisis une couleur dans la palette (roue), puis vise la pièce et appuie sur la **gâchette** |
-| **Mesurer une distance** (menu Mesures) | Vise un 1er point puis un 2e avec la **gâchette** : ligne + distance réelle en mm affichées (indépendant du zoom en cours) |
+| **Mesurer une distance** (menu Mesures) | Vise un 1er point puis un 2e avec la **gâchette** : ligne + distance réelle en mm affichées (indépendant du zoom en cours) - chaque mesure est gardée dans l'historique |
+| **Revoir une mesure déjà prise** | Menu Mesures : la liste affiche toutes les mesures (une seule à l'écran à la fois), clique sur une entrée pour la rappeler |
+| **Effacer une mesure** | Vise la petite croix rouge en haut à droite de sa case, **gâchette** - la retire de l'historique |
 | **Prendre une photo** (menu Capture > Cadre) | Le prochain appui sur la **gâchette** (n'importe laquelle) capture et affiche un aperçu flottant ; reclic dessus pour le fermer |
 | **Annuler / Refaire** | Menu (couvre déplacements, rotations, zoom, couleurs) |
 
@@ -62,6 +66,14 @@ L'application s'ouvre toujours **modèle entier** sélectionné, pas de menu
 « mode » à choisir en premier : le grip agit toujours, la gâchette suit
 simplement le dernier choix fait dans le menu (précision, couleur, mesure).
 Le menu affiche aussi le **% d'échelle réelle** dans Déplacements.
+
+> ⚠️ **Changement important (v1.6.0)** : une sélection de pièce(s) ne
+> disparaît plus automatiquement quand on relâche le bouton A - c'est
+> nécessaire pour pouvoir ensuite la déplacer précisément au gizmo (relâcher
+> A pour utiliser la gâchette du gizmo effaçait la sélection avant, rendant
+> le déplacement précis d'un groupe impossible). Utilise le bouton
+> **« Libre »** du menu Déplacements pour revenir explicitement à « tout le
+> modèle ».
 
 > ⚠️ **Limite technique (photo)** : WebXR ne donne pas accès aux pixels du
 > passthrough à une page web (sécurité/vie privée), donc « Réalité
