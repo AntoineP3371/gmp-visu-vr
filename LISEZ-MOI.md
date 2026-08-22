@@ -1,4 +1,4 @@
-# Visionneuse CAO en réalité mixte — v1.8.0
+# Visionneuse CAO en réalité mixte — v1.9.0
 
 Application WebXR pour Meta Quest 3 : pose n'importe quel modèle 3D (issu
 d'une modélisation 3DEXPERIENCE) sur une vraie table, manipule-le à main
@@ -54,12 +54,12 @@ gâchette.
 | Attraper **la cible courante** à main levée (tout le modèle, ou la sélection si une pièce/un groupe est choisi) | **Grip** seul (sans rien tenir d'autre), bouge la main, relâche - marche quel que soit le menu ouvert |
 | **Choisir une ou plusieurs pièces** à déplacer indépendamment | Maintiens le bouton **A** (ou X), et pendant que tu le tiens, vise chaque pièce avec la **gâchette** pour la (dé)sélectionner (1 pièce = suffisant, plusieurs = un groupe) |
 | Déplacer la sélection à main levée ou précisément | Relâche A si besoin : **la sélection reste active**, grip ou gizmo agissent dessus normalement |
-| Régler la transparence de la sélection | **A tenu**, pousse le **joystick** haut/bas |
+| Régler la transparence de la sélection (opaque → transparent → fantôme) | **A tenu**, pousse le **joystick** haut/bas - progression fine et lente au début, jusqu'à quasi invisible en fin de course |
 | **Régler la transparence d'une pièce visée**, sans la sélectionner d'abord | Vise-la au laser (**gâchette tenue**), pousse le **joystick** haut/bas |
 | **Revenir à « tout le modèle »** | Bouton **« Libre »** (menu Déplacements) - désélectionne et repasse en déplacement libre |
 | **Zoomer** (avant/arrière, sur tout le modèle) | Maintiens le **grip des 2 manettes en même temps** - le % s'affiche en direct entre les 2 mains, et « s'aimante » sur 50/75/100/125/150/200% |
 | **Montrer/pointer quelque chose** | Maintiens la **gâchette appuyée** : un laser rouge s'arrête sur la pièce visée |
-| Translater / tourner précisément (menu Déplacements > Précis) | Vise une flèche ou un anneau, maintiens la **gâchette**, bouge la main, relâche - la valeur (m / degrés) reste affichée en permanence dans sa case (fonctionne aussi sur un groupe de pièces sélectionné) |
+| Translater / tourner précisément (menu Déplacements > Précis) | Vise une flèche ou un anneau, maintiens la **gâchette**, bouge la main, relâche - la valeur (m / degrés) reste affichée en permanence dans sa case, **du même code couleur que l'axe** (fonctionne aussi sur un groupe de pièces sélectionné) |
 | Remettre UN axe à zéro | Vise le petit bouton rouge **« RAZ »** (superposé, en léger premier plan, sur le coin de la case de valeur), **gâchette** |
 | **RAZ générale** (menu Déplacements) | Remet le modèle ENTIER à sa position d'origine, **y compris les pièces déjà déplacées individuellement ou en groupe** |
 | Déplacer le centre de rotation | Vise un point du modèle (hors flèche/anneau), **gâchette** |
@@ -67,7 +67,7 @@ gâchette.
 | **Mesurer une distance** (menu Mesures) | Vise un 1er point puis un 2e avec la **gâchette** : ligne + distance réelle en mm affichées (indépendant du zoom en cours) - chaque mesure est gardée dans l'historique et **suit le modèle** (et chaque pièce déplacée indépendamment) si tu le bouges ensuite |
 | **Revoir une mesure déjà prise** | Menu Mesures : la liste affiche toutes les mesures (une seule à l'écran à la fois), clique sur une entrée pour la rappeler |
 | **Effacer une mesure** | Vise la petite croix rouge en haut à droite de sa case, **gâchette** - la retire de l'historique |
-| **Prendre une photo** (menu Capture > Cadre) | Le prochain appui sur la **gâchette** (n'importe laquelle) capture et affiche un aperçu flottant ; reclic dessus pour le fermer |
+| **Prendre une photo** (menu Capture > Cadre) | Oriente la pièce face à toi, choisis Cadre : un cadre jaune apparaît (aperçu de ce qui sera capturé). Le prochain appui sur la **gâchette** (n'importe laquelle) déclenche un **flash blanc** puis affiche un aperçu flottant ; reclic dessus pour le fermer |
 | **Annuler / Refaire** | Menu Actions, **ou** pousse le **joystick à gauche/droite** (n'importe quelle manette) |
 
 L'application s'ouvre toujours **modèle entier** sélectionné, pas de menu

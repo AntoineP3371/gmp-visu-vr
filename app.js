@@ -57,6 +57,10 @@ renderer.xr.setReferenceSpaceType('local');
 
 var scene  = new THREE.Scene();
 var camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+// La camera doit faire partie de la scene pour que des enfants qui lui sont
+// attaches (ex : le flash de capture photo, cf plus bas) soient rendus -
+// scene.traverse()/renderer.render() ne descend que depuis la racine scene.
+scene.add(camera);
 
 scene.add(new THREE.AmbientLight(0xffffff, 1.5));
 var dirLight = new THREE.DirectionalLight(0xffffff, 1);
@@ -360,6 +364,17 @@ function restaurerOpaciteDe(pieces_) {
       mats.forEach(function (m) { m.opacity = 1; });
     });
   });
+}
+// Convertit une position de joystick (0..1, deja en valeur absolue) en
+// opacite, avec une progression VOLONTAIREMENT NON LINEAIRE : fine et lente
+// pres du centre (opaque -> transparent), puis descend jusqu'a un niveau
+// "fantome" (quasi invisible mais jamais totalement invisible) en fin de
+// course - plus precis a piloter qu'une simple rampe lineaire, qui filait
+// trop vite vers la transparence.
+function opaciteDepuisJoystick(t) {
+  var a = Math.min(1, Math.abs(t));
+  var facteur = Math.pow(a, 1.6);
+  return Math.max(0.04, 1 - facteur * 0.97);
 }
 function appliquerTransparencePiece(piece, opacite) {
   piece.traverse(function (o) {
@@ -679,7 +694,7 @@ function perpendiculaire(axe) {
 // La case (rectangulaire, pas ronde) affiche la valeur EN PERMANENCE - donc
 // assez large pour un texte du genre "+0.123m" ou "-180.0°".
 var MV_W = 160, MV_H = 64;
-function creerMarqueurAxe() {
+function creerMarqueurAxe(couleurAxe) {
   var c = document.createElement('canvas');
   c.width = MV_W; c.height = MV_H;
   var cx = c.getContext('2d');
@@ -688,16 +703,21 @@ function creerMarqueurAxe() {
   s.scale.set(0.07, 0.07 * MV_H / MV_W, 1);
   s.renderOrder = 999;
   s.userData.canvas = c; s.userData.ctx = cx; s.userData.tex = tex;
-  dessinerMarqueurAxe(s, '0', false);
+  dessinerMarqueurAxe(s, '0', false, couleurAxe);
   return s;
 }
-function dessinerMarqueurAxe(s, texte, actif) {
+// Le cadre et le texte reprennent la couleur de LEUR fleche/anneau (plus
+// facile a associer visuellement a l'axe correspondant) - seul le texte
+// passe en jaune pendant qu'on glisse CET axe precis, pour garder un signal
+// "en cours" clair meme si l'axe est deja une couleur vive.
+function dessinerMarqueurAxe(s, texte, actif, couleurAxe) {
   var c = s.userData.canvas, cx = s.userData.ctx;
+  var couleurHex = hex(couleurAxe);
   cx.clearRect(0, 0, MV_W, MV_H);
   rr(cx, 3, 3, MV_W - 6, MV_H - 6, 14);
   cx.fillStyle = actif ? 'rgba(70,55,10,0.94)' : 'rgba(20,20,20,0.88)'; cx.fill();
-  cx.strokeStyle = actif ? '#ffee00' : '#fff'; cx.lineWidth = actif ? 4 : 2; cx.stroke();
-  cx.fillStyle = actif ? '#ffee00' : '#fff';
+  cx.strokeStyle = couleurHex; cx.lineWidth = actif ? 5 : 2.5; cx.stroke();
+  cx.fillStyle = actif ? '#ffee00' : couleurHex;
   cx.textAlign = 'center'; cx.textBaseline = 'middle';
   cx.font = 'bold 26px sans-serif';
   cx.fillText(texte, MV_W / 2, MV_H / 2 + 1);
@@ -757,8 +777,11 @@ AXES.forEach(function (a) {
 
   var fleche = creerFleche(a.couleur, 0.006);
   majFleche(fleche, new THREE.Vector3(), a.dir.clone().multiplyScalar(LONGUEUR_FLECHE));
+  // Zone cliquable reduite (0.025->0.013) : l'ancienne etait trop genereuse
+  // et empietait sur le bouton RAZ voisin, qui pouvait alors recevoir un
+  // clic de translation au lieu d'une reinitialisation.
   var halo = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.025, 0.025, LONGUEUR_FLECHE, 8),
+    new THREE.CylinderGeometry(0.013, 0.013, LONGUEUR_FLECHE, 8),
     new THREE.MeshBasicMaterial({ color: a.couleur, transparent: true, opacity: 0.18, depthTest: false })
   );
   halo.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), a.dir);
@@ -770,20 +793,21 @@ AXES.forEach(function (a) {
   // glissement) ; le bouton RAZ, lui, est une poignee cliquable a part,
   // superposee en haut a droite de la case (cf positionnerBoutonCoin, appele
   // chaque frame dans la boucle de rendu).
-  var valeurT = creerMarqueurAxe();
+  var valeurT = creerMarqueurAxe(a.couleur);
   valeurT.position.copy(a.dir).multiplyScalar(-0.045);
   gizmoTranslate.add(valeurT);
   var razT = creerBoutonRAZ();
   gizmoTranslate.add(razT);
   poignees.push({ mesh: razT, axe: a.dir.clone(), type: 'raz-t', axeLettre: a.nom });
-  marqueursValeur.push({ sprite: valeurT, type: 'translate', axeLettre: a.nom, razSprite: razT });
+  marqueursValeur.push({ sprite: valeurT, type: 'translate', axeLettre: a.nom, razSprite: razT, couleur: a.couleur });
 
   var anneau = new THREE.Mesh(
     new THREE.TorusGeometry(RAYON_ANNEAU, 0.006, 8, 32),
     new THREE.MeshBasicMaterial({ color: a.couleur, depthTest: false })
   );
+  // Meme reduction de zone cliquable que la translation (0.026->0.014).
   var haloAnneau = new THREE.Mesh(
-    new THREE.TorusGeometry(RAYON_ANNEAU, 0.026, 8, 32),
+    new THREE.TorusGeometry(RAYON_ANNEAU, 0.014, 8, 32),
     new THREE.MeshBasicMaterial({ color: a.couleur, transparent: true, opacity: 0.15, depthTest: false })
   );
   var qAnneau = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), a.dir);
@@ -792,13 +816,13 @@ AXES.forEach(function (a) {
   gizmoRotate.add(anneau, haloAnneau);
   poignees.push({ mesh: haloAnneau, axe: a.dir.clone(), type: 'rotate', axeLettre: a.nom });
 
-  var valeurR = creerMarqueurAxe();
+  var valeurR = creerMarqueurAxe(a.couleur);
   valeurR.position.copy(perp).multiplyScalar(RAYON_ANNEAU);
   gizmoRotate.add(valeurR);
   var razR = creerBoutonRAZ();
   gizmoRotate.add(razR);
   poignees.push({ mesh: razR, axe: a.dir.clone(), type: 'raz-r', axeLettre: a.nom });
-  marqueursValeur.push({ sprite: valeurR, type: 'rotate', axeLettre: a.nom, razSprite: razR });
+  marqueursValeur.push({ sprite: valeurR, type: 'rotate', axeLettre: a.nom, razSprite: razR, couleur: a.couleur });
 });
 
 // Deplace le pivot de la cible courante (et le gizmo, qui le suit puisqu'il
@@ -1000,7 +1024,8 @@ function creerCroix() {
 }
 
 function majPositionCroixMesure() {
-  positionnerBoutonCoin(mesureCroix, mesureLabel, 0.046, 0.015);
+  // Decalage reduit dans les memes proportions que l'etiquette (0.075/0.1).
+  positionnerBoutonCoin(mesureCroix, mesureLabel, 0.0345, 0.011);
 }
 // Position monde ACTUELLE d'un point de mesure, recalculee a partir de la
 // piece a laquelle il est rattache (peut avoir bouge depuis la prise).
@@ -1023,7 +1048,9 @@ function creerEtiquetteMesure() {
   var cx = c.getContext('2d');
   var tex = new THREE.CanvasTexture(c);
   var s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
-  s.scale.set(0.1, 0.1 * 76 / 220, 1);
+  // Plus petite (0.1->0.075) et plus transparente (cf dessinerEtiquetteMesure)
+  // qu'avant - elle masquait trop le modele derriere.
+  s.scale.set(0.075, 0.075 * 76 / 220, 1);
   s.renderOrder = 1401;
   s.userData.canvas = c; s.userData.ctx = cx; s.userData.tex = tex;
   return s;
@@ -1031,7 +1058,7 @@ function creerEtiquetteMesure() {
 function dessinerEtiquetteMesure(s, texte) {
   var c = s.userData.canvas, cx = s.userData.ctx;
   cx.clearRect(0, 0, c.width, c.height);
-  rr(cx, 2, 2, c.width - 4, c.height - 4, 14); cx.fillStyle = 'rgba(20,20,20,0.92)'; cx.fill();
+  rr(cx, 2, 2, c.width - 4, c.height - 4, 14); cx.fillStyle = 'rgba(20,20,20,0.55)'; cx.fill();
   rr(cx, 2, 2, c.width - 4, c.height - 4, 14); cx.strokeStyle = '#ffee00'; cx.lineWidth = 3; cx.stroke();
   cx.fillStyle = '#ffee00'; cx.font = 'bold 30px sans-serif';
   cx.textAlign = 'center'; cx.textBaseline = 'middle';
@@ -1188,6 +1215,27 @@ cadrePhoto.visible = false;
 var camPhoto = new THREE.PerspectiveCamera(60, 4 / 3, 0.01, 20);
 var previewPhoto = null;
 
+// Flash blanc plein ecran simulant une prise de photo - un quad attache a
+// la CAMERA (donc toujours "devant les yeux" quelle que soit la direction du
+// regard), rendu SEULEMENT dans les frames normales (jamais dans la passe
+// hors-ecran de capturerPhoto, qui a deja fini de lire ses pixels avant que
+// declencherFlash() ne soit appele - donc pas de risque de flash visible
+// DANS la photo elle-meme).
+var flashPhoto = new THREE.Mesh(
+  new THREE.PlaneGeometry(4, 4),
+  new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthTest: false, depthWrite: false })
+);
+flashPhoto.position.set(0, 0, -0.3);
+flashPhoto.renderOrder = 2000;
+camera.add(flashPhoto);
+function declencherFlash() { flashPhoto.material.opacity = 0.85; }
+// Appele chaque frame (boucle de rendu) : fondu exponentiel, pas besoin de
+// suivre un delta de temps pour un effet purement cosmetique.
+function majFlash() {
+  if (flashPhoto.material.opacity <= 0.002) { flashPhoto.material.opacity = 0; return; }
+  flashPhoto.material.opacity *= 0.82;
+}
+
 function entrerModePhoto() { modePhoto = true; cadrePhoto.visible = true; }
 function sortirModePhoto() { modePhoto = false; cadrePhoto.visible = false; }
 
@@ -1216,6 +1264,7 @@ function afficherApercuPhoto(cv) {
 // mis a false le temps du rendu (sinon le moteur substitue la camera casque).
 function capturerPhoto() {
   if (!carPret) { sortirModePhoto(); return; }
+  flashPhoto.material.opacity = 0; // au cas ou un flash precedent n'ait pas fini de s'estomper
   var L = 512, H = 384;
   camPhoto.aspect = L / H;
   camPhoto.position.copy(camera.position);
@@ -1258,6 +1307,7 @@ function capturerPhoto() {
   c2.putImageData(img, 0, 0);
   afficherApercuPhoto(cv);
   sortirModePhoto();
+  declencherFlash();
 }
 
 // ============================================================================
@@ -1857,6 +1907,7 @@ renderer.setAnimationLoop(function (time, frame) {
 
   if (modeZoom) majZoom();
   if (dragEtat) { if (dragEtat.mode === 'translate') majDragTranslate(); else majDragRotate(); }
+  if (flashPhoto.material.opacity > 0) majFlash();
   if (mesureActiveId != null) {
     // Une piece a pu bouger juste au-dessus (grip, zoom, glissement gizmo) :
     // sans ce rafraichissement la mesure lirait une matrixWorld perimee d'une
@@ -1892,7 +1943,7 @@ renderer.setAnimationLoop(function (time, frame) {
       var modeGlisse = dragEtat ? dragEtat.mode : (dragBureau ? dragBureau.type : null);
       var actif = !!(dragActuel && dragActuel.axeLettre === mv.axeLettre && modeGlisse === mv.type);
       var texte = mv.type === 'translate' ? texteAxeTranslation(mv.axeLettre) : texteAxeRotation(mv.axeLettre);
-      dessinerMarqueurAxe(mv.sprite, texte, actif);
+      dessinerMarqueurAxe(mv.sprite, texte, actif, mv.couleur);
       positionnerBoutonCoin(mv.razSprite, mv.sprite, 0.028, 0.012);
     });
   }
@@ -1915,12 +1966,12 @@ renderer.setAnimationLoop(function (time, frame) {
       if (boutonAppuye(ctrl, 4) && selection.length) {
         if (gp && gp.axes && gp.axes.length > 3) {
           var t = gp.axes[3] || 0;
-          appliquerTransparenceSelection(Math.max(0.12, 1 - Math.abs(t) * 0.85));
+          appliquerTransparenceSelection(opaciteDepuisJoystick(t));
         }
       } else if (selectTenu[ci] && ctrl.userData.pieceLaser) {
         var tLaser = (gp && gp.axes && gp.axes.length > 3) ? (gp.axes[3] || 0) : 0;
         if (Math.abs(tLaser) > 0.08) {
-          appliquerTransparencePiece(ctrl.userData.pieceLaser, Math.max(0.12, 1 - Math.abs(tLaser) * 0.85));
+          appliquerTransparencePiece(ctrl.userData.pieceLaser, opaciteDepuisJoystick(tLaser));
         }
       }
     });
