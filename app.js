@@ -4,7 +4,8 @@ window.addEventListener('load', function () {
 //  VISIONNEUSE CAO EN REALITE MIXTE
 //  Charge un modele GLB (issu d'un export STEP 3DEXPERIENCE converti sur PC),
 //  le pose sur une vraie surface, permet de le manipuler (main libre ou
-//  gizmo precis avec pivot reglable) et de colorer ses pieces.
+//  gizmo precis avec pivot reglable), de deplacer des pieces independamment,
+//  de zoomer, et de colorer ses pieces. Annuler/Refaire sur tout ca.
 // ============================================================================
 
 var status  = document.getElementById('status');
@@ -74,8 +75,14 @@ function hex(n) { return '#' + ('000000' + n.toString(16)).slice(-6); }
 // ============================================================================
 //  HIERARCHIE
 //  anchor : posee sur la table (placement)
-//    pivot : LE point de manipulation reglable (translate/rotate agissent ici)
+//    pivot : LE point de manipulation du modele ENTIER (translate/rotate/zoom)
 //      racineModele : le GLB centre/mis a l'echelle
+//      pivotSelection : cree/detruit a la volee, enveloppe la piece ou le
+//                        groupe de pieces actuellement cible independamment
+//    gizmoTranslate / gizmoRotate : enfants de anchor (pas de pivot !),
+//      repositionnes chaque frame sur la CIBLE courante - ainsi leur taille
+//      a l'ecran ne change pas avec le zoom et leur orientation reste
+//      toujours alignee sur la table sans calcul de contre-rotation.
 // ============================================================================
 var anchor = new THREE.Group();
 anchor.visible = false;
@@ -85,10 +92,13 @@ var anchorPlaced = false;
 var pivot = new THREE.Group();
 anchor.add(pivot);
 
-var racineModele  = null;
-var pieces        = [];     // tous les meshes coloriables (traverse complet)
-var carPret        = false;
-var nomModeleCourant = '';
+var racineModele    = null;
+var pieces           = [];     // tous les meshes coloriables (traverse complet)
+var piecesMobiles     = [];    // pieces de haut niveau, deplacables independamment
+var pivotSelection    = null;  // enveloppe temporaire de la selection courante
+var carPret           = false;
+var nomModeleCourant  = '';
+var echelleInitiale   = 1;     // facteur applique par ajusterTaille (pour le % d'echelle)
 
 // --- Reticule + repere de placement ---
 var hitTestSource          = null;
@@ -118,6 +128,7 @@ function replacer() {
   anchorPlaced = false;
   preview.visible = true;
   panneau.visible = false;
+  definirCibleType(CIBLE.MODELE);
   definirMode(MODE.LIBRE);
 }
 function quitterAR() {
@@ -128,6 +139,73 @@ function quitterAR() {
 }
 
 // ============================================================================
+//  ANNULER / REFAIRE
+//  Historique lineaire d'actions typees. Les transformations sont enregistrees
+//  comme des matrices MONDE avant/apres sur des objets stables (racineModele
+//  ou les pieces elles-memes - jamais pivotSelection, qui est detruit/recree
+//  a chaque changement de selection) : la restauration fonctionne donc meme
+//  si la hierarchie a change depuis l'enregistrement.
+// ============================================================================
+var historique = [];
+var refaire    = [];
+var MAX_HISTORIQUE = 50;
+
+function enregistrer(action) {
+  historique.push(action);
+  if (historique.length > MAX_HISTORIQUE) historique.shift();
+  refaire.length = 0;
+  majPanneau();
+}
+
+function capturerMatricesMonde(objets) {
+  return objets.map(function (o) { o.updateMatrixWorld(true); return o.matrixWorld.clone(); });
+}
+function definirMatriceMonde(objet, matriceMonde) {
+  if (!objet.parent) return;
+  objet.parent.updateMatrixWorld(true);
+  var local = objet.parent.matrixWorld.clone().invert().multiply(matriceMonde);
+  local.decompose(objet.position, objet.quaternion, objet.scale);
+}
+function matricesEgales(a, b) {
+  for (var i = 0; i < 16; i++) { if (Math.abs(a.elements[i] - b.elements[i]) > 1e-6) return false; }
+  return true;
+}
+function enregistrerTransformSiChange(objets, avant, apres) {
+  if (!objets.length) return;
+  var change = false;
+  for (var i = 0; i < objets.length; i++) { if (!matricesEgales(avant[i], apres[i])) { change = true; break; } }
+  if (!change) return;
+  enregistrer({ type: 'transform', objets: objets.slice(), avant: avant, apres: apres });
+}
+
+function appliquerAction(a, versApres) {
+  if (a.type === 'transform') {
+    var mats = versApres ? a.apres : a.avant;
+    a.objets.forEach(function (o, i) { definirMatriceMonde(o, mats[i]); });
+  } else if (a.type === 'echelle') {
+    pivot.scale.setScalar(versApres ? a.apres : a.avant);
+  } else if (a.type === 'couleur') {
+    a.mat.color.setHex(versApres ? a.apres : a.avant);
+  } else if (a.type === 'couleur-lot') {
+    a.entrees.forEach(function (e) { e.mat.color.setHex(versApres ? e.apres : e.avant); });
+  }
+}
+function annuler() {
+  if (!historique.length) return;
+  var a = historique.pop();
+  appliquerAction(a, false);
+  refaire.push(a);
+  majPanneau();
+}
+function retablir() {
+  if (!refaire.length) return;
+  var a = refaire.pop();
+  appliquerAction(a, true);
+  historique.push(a);
+  majPanneau();
+}
+
+// ============================================================================
 //  CHARGEMENT DU MODELE
 // ============================================================================
 function ajusterTaille(objet, tailleCible) {
@@ -135,12 +213,21 @@ function ajusterTaille(objet, tailleCible) {
   var taille = new THREE.Vector3();
   box.getSize(taille);
   var maxDim = Math.max(taille.x, taille.y, taille.z);
-  if (maxDim > 0) objet.scale.setScalar(tailleCible / maxDim);
+  var facteur = maxDim > 0 ? tailleCible / maxDim : 1;
+  objet.scale.setScalar(facteur);
+  return facteur;
+}
+function capturerOrigine(obj) {
+  obj.userData.origine = { pos: obj.position.clone(), quat: obj.quaternion.clone() };
 }
 
 var loader = new THREE.GLTFLoader();
 
 function chargerModele(fichier) {
+  pivot.position.set(0, 0, 0);
+  pivot.quaternion.identity();
+  pivot.scale.set(1, 1, 1);
+
   loader.load(fichier, function (gltf) {
     var root = gltf.scene;
 
@@ -148,7 +235,7 @@ function chargerModele(fichier) {
     // Box3.setFromObject renvoie des coordonnees MONDE : si root etait deja
     // rattache au pivot (deja positionne sur la table), on soustrairait un
     // decalage monde a une position locale et le modele partirait hors de vue.
-    ajusterTaille(root, 0.30);
+    echelleInitiale = ajusterTaille(root, 0.30);
     root.updateMatrixWorld(true);
     var box = new THREE.Box3().setFromObject(root);
     var centre = new THREE.Vector3();
@@ -174,7 +261,15 @@ function chargerModele(fichier) {
       pieces.push(o);
     });
 
+    // Pieces de haut niveau (unite de deplacement independant) : on descend
+    // sous les groupes d'emballage a enfant unique typiques des exports
+    // STEP->GLTF, jusqu'au premier noeud qui a plusieurs enfants (ou aucun).
+    var carRacine = root;
+    while (carRacine.children.length === 1) carRacine = carRacine.children[0];
+    piecesMobiles = carRacine.children.slice();
+
     pivot.updateMatrixWorld(true);
+    capturerOrigine(pivot);
     carPret = true;
     majPanneau();
   }, undefined, function (e) {
@@ -183,36 +278,220 @@ function chargerModele(fichier) {
 }
 
 // ============================================================================
-//  ETAT / MODES DE MANIPULATION
+//  CIBLE DE MANIPULATION : modele entier / une piece / un groupe de pieces
 // ============================================================================
-var MODE = { LIBRE: 'libre', GIZMO_T: 'gizmo-t', GIZMO_R: 'gizmo-r', COULEUR: 'couleur' };
-var mode = MODE.LIBRE;
-var dragEtat = null;
+var CIBLE = { MODELE: 'modele', PIECE: 'piece', GROUPE: 'groupe' };
+var cibleType     = CIBLE.MODELE;
+var selection      = [];      // pieces actuellement dans la cible piece/groupe
+var enChoixCible    = false;   // vrai pendant qu'on clique les pieces a (de)selectionner
+var piecesSurlignees = [];     // meshes actuellement teintes (pour les nettoyer)
 
-function definirMode(m) {
-  mode = m;
-  gizmoTranslate.visible = (m === MODE.GIZMO_T);
-  gizmoRotate.visible    = (m === MODE.GIZMO_R);
-  dragEtat = null;
+function cibleCourante() {
+  return cibleType === CIBLE.MODELE ? pivot : pivotSelection;
+}
+function parentLogiqueCible() {
+  return cibleType === CIBLE.MODELE ? anchor : pivot;
+}
+function objetsCiblesActuels() {
+  if (cibleType === CIBLE.MODELE) return racineModele ? [racineModele] : [];
+  return selection.slice();
+}
+
+function surlignerSelection() {
+  piecesSurlignees.forEach(function (m) {
+    var mats = Array.isArray(m.material) ? m.material : [m.material];
+    mats.forEach(function (mat) { if (mat.emissive) mat.emissive.setHex(0x000000); });
+  });
+  piecesSurlignees = [];
+  selection.forEach(function (piece) {
+    piece.traverse(function (o) {
+      if (!o.isMesh) return;
+      var mats = Array.isArray(o.material) ? o.material : [o.material];
+      mats.forEach(function (mat) { if (mat.emissive) mat.emissive.setHex(0x554400); });
+      piecesSurlignees.push(o);
+    });
+  });
+}
+
+function relacherSelection() {
+  if (pivotSelection) {
+    pivotSelection.children.slice().forEach(function (p) { pivot.attach(p); });
+    pivot.remove(pivotSelection);
+    pivotSelection = null;
+  }
+}
+
+// Reconstruit pivotSelection autour du centroide (coordonnees monde) de la
+// selection courante, puis y rattache chaque piece (Object3D.attach
+// preserve sa position monde : rien ne bouge visuellement).
+function reconstruireCible() {
+  relacherSelection();
+  if (!selection.length) return;
+  pivotSelection = new THREE.Group();
+  pivot.add(pivotSelection);
+  var centre = new THREE.Vector3();
+  selection.forEach(function (p) {
+    var v = new THREE.Vector3();
+    p.getWorldPosition(v);
+    centre.add(v);
+  });
+  centre.divideScalar(selection.length);
+  pivotSelection.position.copy(pivot.worldToLocal(centre.clone()));
+  pivotSelection.updateMatrixWorld(true);
+  selection.forEach(function (p) { pivotSelection.attach(p); });
+  capturerOrigine(pivotSelection);
+}
+
+function definirCibleType(t) {
+  if (t === cibleType) {
+    if (t !== CIBLE.MODELE) enChoixCible = !enChoixCible;
+  } else {
+    cibleType = t;
+    selection = [];
+    relacherSelection();
+    surlignerSelection();
+    enChoixCible = (t !== CIBLE.MODELE);
+    dragEtat = null;
+  }
+  majPanneau();
+}
+
+function trouverPieceRacine(mesh) {
+  var o = mesh;
+  while (o) {
+    if (piecesMobiles.indexOf(o) !== -1) return o;
+    o = o.parent;
+  }
+  return null;
+}
+function gererClicSelection(ray) {
+  var hits = ray.intersectObjects(pieces, false);
+  if (!hits.length) return;
+  var piece = trouverPieceRacine(hits[0].object);
+  if (!piece) return;
+  if (cibleType === CIBLE.PIECE) {
+    selection = [piece];
+  } else {
+    var i = selection.indexOf(piece);
+    if (i >= 0) selection.splice(i, 1); else selection.push(piece);
+  }
+  surlignerSelection();
+  reconstruireCible();
   majPanneau();
 }
 
 // ============================================================================
-//  A. MAIN LIBRE : saisie 6DOF de l'ensemble anchor.attach(pivot)/ctrl.attach(pivot)
+//  REINITIALISATION (position/rotation globale ou par axe)
 // ============================================================================
-var SEUIL_MARGE = 0.15;   // marge de tolerance autour de la sphere englobante
-var grabIdx = -1;
+function resetPosition() {
+  var c = cibleCourante(); if (!c || !c.userData.origine) return;
+  var avant = capturerMatricesMonde(objetsCiblesActuels());
+  c.position.copy(c.userData.origine.pos);
+  var apres = capturerMatricesMonde(objetsCiblesActuels());
+  enregistrerTransformSiChange(objetsCiblesActuels(), avant, apres);
+  majPanneau();
+}
+function resetRotation() {
+  var c = cibleCourante(); if (!c || !c.userData.origine) return;
+  var avant = capturerMatricesMonde(objetsCiblesActuels());
+  c.quaternion.copy(c.userData.origine.quat);
+  var apres = capturerMatricesMonde(objetsCiblesActuels());
+  enregistrerTransformSiChange(objetsCiblesActuels(), avant, apres);
+  majPanneau();
+}
+function resetAxeTranslation(lettre) {
+  var c = cibleCourante(); if (!c || !c.userData.origine) return;
+  var avant = capturerMatricesMonde(objetsCiblesActuels());
+  c.position[lettre] = c.userData.origine.pos[lettre];
+  var apres = capturerMatricesMonde(objetsCiblesActuels());
+  enregistrerTransformSiChange(objetsCiblesActuels(), avant, apres);
+  majPanneau();
+}
+function resetAxeRotation(lettre) {
+  var c = cibleCourante(); if (!c || !c.userData.origine) return;
+  var avant = capturerMatricesMonde(objetsCiblesActuels());
+  // Decomposition Euler (ordre XYZ) : approximation pratique pour isoler UN
+  // axe de rotation a la fois - une vraie decomposition orthogonale n'existe
+  // pas en general pour des quaternions composes, mais suffit largement pour
+  // un bouton "remets cet axe a zero".
+  var eActuel  = new THREE.Euler().setFromQuaternion(c.quaternion, 'XYZ');
+  var eOrigine = new THREE.Euler().setFromQuaternion(c.userData.origine.quat, 'XYZ');
+  eActuel[lettre] = eOrigine[lettre];
+  c.quaternion.setFromEuler(eActuel);
+  var apres = capturerMatricesMonde(objetsCiblesActuels());
+  enregistrerTransformSiChange(objetsCiblesActuels(), avant, apres);
+  majPanneau();
+}
+
+// ============================================================================
+//  A. MAIN LIBRE : saisie 6DOF de la cible courante (modele, piece ou groupe)
+// ============================================================================
+var SEUIL_MARGE = 0.15;   // marge de tolerance autour de la boite englobante
+var grabIdx   = -1;
+var grabAvant = null;
 
 function pointDeGrabProche(posControleur) {
-  if (!racineModele) return false;
-  var box = new THREE.Box3().setFromObject(racineModele);
+  var objets = objetsCiblesActuels();
+  if (!objets.length) return false;
+  var box = new THREE.Box3();
+  objets.forEach(function (o, i) {
+    var b = new THREE.Box3().setFromObject(o);
+    if (i === 0) box.copy(b); else box.union(b);
+  });
   var sphere = new THREE.Sphere();
   box.getBoundingSphere(sphere);
   return posControleur.distanceTo(sphere.center) < (sphere.radius + SEUIL_MARGE);
 }
+function terminerGrab() {
+  var c = cibleCourante();
+  if (c) {
+    parentLogiqueCible().attach(c);
+    if (grabAvant) {
+      var apres = capturerMatricesMonde(objetsCiblesActuels());
+      enregistrerTransformSiChange(objetsCiblesActuels(), grabAvant, apres);
+    }
+  }
+  grabIdx = -1;
+  grabAvant = null;
+}
 
 // ============================================================================
-//  B. GIZMO DE MANIPULATION PRECISE (translation + rotation, pivot reglable)
+//  ZOOM A 2 MANETTES (grips simultanes) - agit toujours sur le modele entier
+// ============================================================================
+var gripEtat = [false, false];
+var modeZoom = false;
+var zoomDistDepart = 0, zoomEchelleDepart = 1, zoomAvant = null;
+var ECHELLE_MIN = 0.05, ECHELLE_MAX = 20;
+
+function demarrerZoom() {
+  modeZoom = true;
+  var p0 = new THREE.Vector3(); controllers[0].getWorldPosition(p0);
+  var p1 = new THREE.Vector3(); controllers[1].getWorldPosition(p1);
+  zoomDistDepart = p0.distanceTo(p1);
+  zoomEchelleDepart = pivot.scale.x;
+  zoomAvant = pivot.scale.x;
+}
+function majZoom() {
+  var p0 = new THREE.Vector3(); controllers[0].getWorldPosition(p0);
+  var p1 = new THREE.Vector3(); controllers[1].getWorldPosition(p1);
+  if (zoomDistDepart < 1e-4) return;
+  var facteur = p0.distanceTo(p1) / zoomDistDepart;
+  var nouvelle = Math.max(ECHELLE_MIN, Math.min(ECHELLE_MAX, zoomEchelleDepart * facteur));
+  pivot.scale.setScalar(nouvelle);
+}
+function terminerZoom() {
+  modeZoom = false;
+  if (zoomAvant !== null && Math.abs(pivot.scale.x - zoomAvant) > 1e-6) {
+    enregistrer({ type: 'echelle', avant: zoomAvant, apres: pivot.scale.x });
+  }
+  zoomAvant = null;
+}
+function pourcentageEchelle() {
+  return pivot.scale.x * echelleInitiale * 100;
+}
+
+// ============================================================================
+//  B. GIZMO DE MANIPULATION PRECISE (translation + rotation)
 // ============================================================================
 var AXES = [
   { nom: 'x', dir: new THREE.Vector3(1, 0, 0), couleur: 0xff3333 },
@@ -246,14 +525,39 @@ function majFleche(f, depuis, vers) {
   f.position.copy(depuis);
   f.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
 }
+function perpendiculaire(axe) {
+  var aide = Math.abs(axe.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+  return new THREE.Vector3().crossVectors(axe, aide).normalize();
+}
 
+// Petit marqueur "0" (sprite = toujours face a la camera), texture partagee
+var zc = document.createElement('canvas');
+zc.width = 64; zc.height = 64;
+var zctx = zc.getContext('2d');
+zctx.fillStyle = 'rgba(30,30,30,0.9)';
+zctx.beginPath(); zctx.arc(32, 32, 29, 0, Math.PI * 2); zctx.fill();
+zctx.strokeStyle = '#fff'; zctx.lineWidth = 3; zctx.stroke();
+zctx.fillStyle = '#fff'; zctx.font = 'bold 30px sans-serif';
+zctx.textAlign = 'center'; zctx.textBaseline = 'middle';
+zctx.fillText('0', 32, 34);
+var texZero = new THREE.CanvasTexture(zc);
+var matZero = new THREE.SpriteMaterial({ map: texZero, depthTest: false, transparent: true });
+function creerMarqueurZero() {
+  var s = new THREE.Sprite(matZero);
+  s.scale.set(0.035, 0.035, 0.035);
+  s.renderOrder = 999;
+  return s;
+}
+
+// gizmoTranslate/gizmoRotate sont enfants de anchor (pas de pivot) : ils sont
+// repositionnes chaque frame sur la cible courante dans la boucle de rendu.
 var gizmoTranslate = new THREE.Group();
 var gizmoRotate    = new THREE.Group();
-pivot.add(gizmoTranslate, gizmoRotate);
+anchor.add(gizmoTranslate, gizmoRotate);
 gizmoTranslate.visible = false;
 gizmoRotate.visible    = false;
 
-var poignees = [];   // { mesh (halo, sert au raycast), axe, type: 'translate'|'rotate' }
+var poignees = [];   // { mesh (sert au raycast), axe, type, axeLettre? }
 
 AXES.forEach(function (a) {
   var fleche = creerFleche(a.couleur, 0.006);
@@ -266,6 +570,11 @@ AXES.forEach(function (a) {
   halo.position.copy(a.dir).multiplyScalar(LONGUEUR_FLECHE / 2);
   gizmoTranslate.add(fleche, halo);
   poignees.push({ mesh: halo, axe: a.dir.clone(), type: 'translate' });
+
+  var zeroT = creerMarqueurZero();
+  zeroT.position.copy(a.dir).multiplyScalar(-0.045);
+  gizmoTranslate.add(zeroT);
+  poignees.push({ mesh: zeroT, axe: a.dir.clone(), type: 'zero-t', axeLettre: a.nom });
 
   var anneau = new THREE.Mesh(
     new THREE.TorusGeometry(RAYON_ANNEAU, 0.006, 8, 32),
@@ -280,29 +589,23 @@ AXES.forEach(function (a) {
   haloAnneau.quaternion.copy(qAnneau);
   gizmoRotate.add(anneau, haloAnneau);
   poignees.push({ mesh: haloAnneau, axe: a.dir.clone(), type: 'rotate' });
+
+  var zeroR = creerMarqueurZero();
+  zeroR.position.copy(perpendiculaire(a.dir)).multiplyScalar(RAYON_ANNEAU);
+  gizmoRotate.add(zeroR);
+  poignees.push({ mesh: zeroR, axe: a.dir.clone(), type: 'zero-r', axeLettre: a.nom });
 });
 
-// Contre-rotation : les axes du gizmo restent alignes sur la TABLE (anchor),
-// pas sur le modele - sinon "l'axe rouge" change de sens physique a chaque
-// rotation, ce qui perd vite un debutant.
-function orienterGizmo() {
-  // gizmoTranslate/gizmoRotate sont enfants de pivot : leur quaternion LOCAL
-  // doit annuler celui de pivot (pas son quaternion MONDE, qui inclurait
-  // aussi la rotation de l'ancre) pour que le gizmo reste aligne sur la
-  // table quelle que soit la rotation deja appliquee au modele.
-  var q = pivot.quaternion.clone().invert();
-  gizmoTranslate.quaternion.copy(q);
-  gizmoRotate.quaternion.copy(q);
-}
-
-// Deplace le pivot (et le gizmo, qui le suit puisqu'il est son enfant a
-// l'origine locale) SANS deplacer visuellement le modele : on re-attache le
-// modele apres coup, ce qui recalcule sa position locale pour compenser.
-function reposerPivot(pointMonde) {
-  var local = anchor.worldToLocal(pointMonde.clone());
-  pivot.position.copy(local);
-  pivot.updateMatrixWorld(true);
-  pivot.attach(racineModele);
+// Deplace le pivot de la cible courante (et le gizmo, qui le suit puisqu'il
+// est resynchronise chaque frame) SANS deplacer visuellement ce qu'elle
+// porte : on re-attache ses enfants apres coup, ce qui recalcule leur
+// position locale pour compenser.
+function reposerCible(pointMonde) {
+  var c = cibleCourante(); if (!c) return;
+  var local = c.parent.worldToLocal(pointMonde.clone());
+  c.position.copy(local);
+  c.updateMatrixWorld(true);
+  c.children.slice().forEach(function (child) { c.attach(child); });
 }
 
 function projeteSurPlan(v, axe) {
@@ -313,23 +616,26 @@ function angleSigneAutourAxe(a, b, axe) {
   return Math.atan2(croix.dot(axe), a.dot(b));
 }
 
+var dragEtat = null;
+
 function demarrerDragTranslate(idx, poignee) {
+  var c = cibleCourante(); if (!c) return;
   var p = new THREE.Vector3();
   controllers[idx].getWorldPosition(p);
   var posPivot = new THREE.Vector3();
-  pivot.getWorldPosition(posPivot);
+  c.getWorldPosition(posPivot);
   dragEtat = {
     idx: idx, poignee: poignee, mode: 'translate',
-    posDepartControleur: p,
-    posDepartPivot: posPivot
+    posDepartControleur: p, posDepartPivot: posPivot,
+    objets: objetsCiblesActuels(), avant: capturerMatricesMonde(objetsCiblesActuels())
   };
 }
-
 // Deplacement brut de la manette projete sur l'axe (figé au debut du drag,
 // exprime dans le repere de l'ancre) : la manette donnant deja une position
 // 3D a chaque frame, inutile de chercher le point le plus proche sur une
 // droite (technique reservee a une souris 2D sans profondeur).
 function majDragTranslate() {
+  var c = cibleCourante(); if (!c) return;
   var pActuel = new THREE.Vector3();
   controllers[dragEtat.idx].getWorldPosition(pActuel);
   var delta = pActuel.clone().sub(dragEtat.posDepartControleur);
@@ -338,39 +644,41 @@ function majDragTranslate() {
   var axeMonde = dragEtat.poignee.axe.clone().applyQuaternion(qAncre);
   var deplacement = axeMonde.multiplyScalar(delta.dot(axeMonde));
   var nouveauMonde = dragEtat.posDepartPivot.clone().add(deplacement);
-  pivot.position.copy(anchor.worldToLocal(nouveauMonde));
+  c.position.copy(c.parent.worldToLocal(nouveauMonde));
 }
 
 function demarrerDragRotate(idx, poignee) {
+  var c = cibleCourante(); if (!c) return;
   var pivotPos = new THREE.Vector3();
-  pivot.getWorldPosition(pivotPos);
+  c.getWorldPosition(pivotPos);
   var pC = new THREE.Vector3();
   controllers[idx].getWorldPosition(pC);
   var qAncre = new THREE.Quaternion();
   anchor.getWorldQuaternion(qAncre);
   var axeMonde = poignee.axe.clone().applyQuaternion(qAncre);
   var qPivot = new THREE.Quaternion();
-  pivot.getWorldQuaternion(qPivot);
+  c.getWorldQuaternion(qPivot);
   dragEtat = {
     idx: idx, poignee: poignee, mode: 'rotate',
     axeMonde: axeMonde, pivotPos: pivotPos,
     vDepart: projeteSurPlan(pC.clone().sub(pivotPos), axeMonde).normalize(),
-    quatDepartPivot: qPivot
+    quatDepartPivot: qPivot,
+    objets: objetsCiblesActuels(), avant: capturerMatricesMonde(objetsCiblesActuels())
   };
 }
-
 // Angle signe autour de l'axe, entre le vecteur de depart et le vecteur
 // courant (manette - pivot, projetes sur le plan perpendiculaire a l'axe).
 function majDragRotate() {
+  var c = cibleCourante(); if (!c) return;
   var pC = new THREE.Vector3();
   controllers[dragEtat.idx].getWorldPosition(pC);
   var vActuel = projeteSurPlan(pC.clone().sub(dragEtat.pivotPos), dragEtat.axeMonde).normalize();
   var angle = angleSigneAutourAxe(dragEtat.vDepart, vActuel, dragEtat.axeMonde);
   var qDelta = new THREE.Quaternion().setFromAxisAngle(dragEtat.axeMonde, angle);
   var qCible = qDelta.multiply(dragEtat.quatDepartPivot);
-  var qAncreInv = new THREE.Quaternion();
-  anchor.getWorldQuaternion(qAncreInv).invert();
-  pivot.quaternion.copy(qAncreInv.multiply(qCible));
+  var qParentInv = new THREE.Quaternion();
+  c.parent.getWorldQuaternion(qParentInv).invert();
+  c.quaternion.copy(qParentInv.multiply(qCible));
 }
 
 // ============================================================================
@@ -386,38 +694,53 @@ function couleurCourante() { return PALETTE[couleurIdx]; }
 function remplirPiece(inter) {
   var o = inter.object;
   if (!o.isMesh) return;
+  var mat;
   if (Array.isArray(o.material)) {
     var idx = (inter.face && inter.face.materialIndex) || 0;
     if (!o.material[idx]) return;
-    o.material[idx].color.setHex(couleurCourante());
+    mat = o.material[idx];
   } else {
-    o.material.color.setHex(couleurCourante());
+    mat = o.material;
   }
+  var avant = mat.color.getHex();
+  var apres = couleurCourante();
+  if (avant === apres) return;
+  mat.color.setHex(apres);
+  enregistrer({ type: 'couleur', mat: mat, avant: avant, apres: apres });
 }
 
 function colorierAutomatiquement() {
   var total = 0;
   pieces.forEach(function (o) { total += Array.isArray(o.material) ? o.material.length : 1; });
-  var i = 0;
+  var i = 0, entrees = [];
   pieces.forEach(function (o) {
     var mats = Array.isArray(o.material) ? o.material : [o.material];
     mats.forEach(function (m) {
-      m.color.copy(new THREE.Color().setHSL(i / Math.max(total, 1), 0.65, 0.55));
+      var avant = m.color.getHex();
+      var apres = new THREE.Color().setHSL(i / Math.max(total, 1), 0.65, 0.55).getHex();
+      m.color.setHex(apres);
+      entrees.push({ mat: m, avant: avant, apres: apres });
       i++;
     });
   });
+  if (entrees.length) enregistrer({ type: 'couleur-lot', entrees: entrees });
 }
 
 function reinitialiserCouleurs() {
+  var entrees = [];
   pieces.forEach(function (o) {
     var orig = o.userData.couleursOrigine;
     if (!orig) return;
-    if (Array.isArray(o.material)) {
-      o.material.forEach(function (m, i) { m.color.setHex(orig[i]); });
-    } else {
-      o.material.color.setHex(orig[0]);
-    }
+    var mats = Array.isArray(o.material) ? o.material : [o.material];
+    mats.forEach(function (m, i) {
+      var avant = m.color.getHex();
+      var apres = orig[i];
+      if (avant === apres) return;
+      m.color.setHex(apres);
+      entrees.push({ mat: m, avant: avant, apres: apres });
+    });
   });
+  if (entrees.length) enregistrer({ type: 'couleur-lot', entrees: entrees });
 }
 
 // ============================================================================
@@ -425,28 +748,40 @@ function reinitialiserCouleurs() {
 //  Les zones sont declarees UNE SEULE FOIS et servent a la fois au dessin et
 //  a la detection du clic : impossible qu'elles se desynchronisent.
 // ============================================================================
-var PW = 512, PH = 300;
-var PLANE_W = 0.42, PLANE_H = PLANE_W * PH / PW;
+var PW = 512, PH = 400;
+var PLANE_W = 0.46, PLANE_H = PLANE_W * PH / PW;
 
+var ZA = {
+  modele:  { x: 8,   y: 8,  w: 160, h: 32 },
+  piece:   { x: 176, y: 8,  w: 160, h: 32 },
+  groupe:  { x: 344, y: 8,  w: 160, h: 32 },
+  choisir: { x: 8,   y: 44, w: 496, h: 28 }
+};
 var ZT = {
-  tabLibre:     { x: 8,   y: 8, w: 160, h: 36 },
-  tabPrecision: { x: 176, y: 8, w: 160, h: 36 },
-  tabCouleur:   { x: 344, y: 8, w: 160, h: 36 }
+  tabLibre:     { x: 8,   y: 80, w: 160, h: 32 },
+  tabPrecision: { x: 176, y: 80, w: 160, h: 32 },
+  tabCouleur:   { x: 344, y: 80, w: 160, h: 32 }
 };
 var ZP = {
-  translater: { x: 8,   y: 56, w: 246, h: 54 },
-  tourner:    { x: 262, y: 56, w: 242, h: 54 }
+  translater: { x: 8,   y: 120, w: 246, h: 46 },
+  tourner:    { x: 262, y: 120, w: 242, h: 46 },
+  reset0Pos:  { x: 8,   y: 172, w: 246, h: 38 },
+  reset0Rot:  { x: 262, y: 172, w: 242, h: 38 }
 };
 var ZC = {
-  auto:  { x: 8,   y: 160, w: 246, h: 46 },
-  reset: { x: 262, y: 160, w: 242, h: 46 }
+  auto:  { x: 8,   y: 212, w: 246, h: 42 },
+  reset: { x: 262, y: 212, w: 242, h: 42 }
+};
+var ZU = {
+  annuler: { x: 8,   y: 262, w: 246, h: 42 },
+  refaire: { x: 262, y: 262, w: 242, h: 42 }
 };
 var ZB = {
-  replacer: { x: 8,   y: 220, w: 246, h: 50 },
-  quitter:  { x: 262, y: 220, w: 242, h: 50 }
+  replacer: { x: 8,   y: 312, w: 246, h: 46 },
+  quitter:  { x: 262, y: 312, w: 242, h: 46 }
 };
 function zoneCouleur(i) {
-  return { x: 8 + (i % 6) * 84, y: 56 + (i < 6 ? 0 : 48), w: 76, h: 40 };
+  return { x: 8 + (i % 6) * 84, y: 120 + (i < 6 ? 0 : 44), w: 76, h: 40 };
 }
 
 var pc  = document.createElement('canvas');
@@ -474,22 +809,43 @@ function dessinerPanneau() {
   ctx.clearRect(0, 0, PW, PH);
   ctx.fillStyle = 'rgba(20,20,20,0.94)'; rr(ctx, 0, 0, PW, PH, 18); ctx.fill();
 
-  ctx.font = 'bold 15px sans-serif';
+  // --- Cible ---
+  ctx.font = 'bold 14px sans-serif';
+  bouton(ZA.modele, cibleType === CIBLE.MODELE ? '#2c5aa0' : '#242430', 'MODELE ENTIER', cibleType === CIBLE.MODELE);
+  bouton(ZA.piece,  cibleType === CIBLE.PIECE  ? '#2c5aa0' : '#242430', 'PIECE',         cibleType === CIBLE.PIECE);
+  bouton(ZA.groupe, cibleType === CIBLE.GROUPE ? '#2c5aa0' : '#242430', 'GROUPE',        cibleType === CIBLE.GROUPE);
+
+  ctx.textAlign = 'center';
+  if (cibleType !== CIBLE.MODELE) {
+    ctx.font = 'bold 14px sans-serif';
+    bouton(ZA.choisir, enChoixCible ? '#8e2b2b' : '#2c5aa0', enChoixCible ? 'TERMINER LA SELECTION' : 'CHOISIR...', enChoixCible);
+  } else {
+    ctx.fillStyle = '#666'; ctx.font = '12px sans-serif';
+    ctx.fillText('Main libre et precision agissent sur tout le modele', PW / 2, 62);
+  }
+
+  // --- Onglets de manipulation ---
   var enPrecision = (mode === MODE.GIZMO_T || mode === MODE.GIZMO_R);
+  ctx.font = 'bold 14px sans-serif';
   bouton(ZT.tabLibre,     mode === MODE.LIBRE ? '#2c5aa0' : '#242430', 'MAIN LIBRE', mode === MODE.LIBRE);
   bouton(ZT.tabPrecision, enPrecision           ? '#2c5aa0' : '#242430', 'PRECISION',  enPrecision);
   bouton(ZT.tabCouleur,   mode === MODE.COULEUR ? '#2c5aa0' : '#242430', 'COULEUR',    mode === MODE.COULEUR);
 
-  ctx.textAlign = 'center'; ctx.fillStyle = '#aaa'; ctx.font = '13px sans-serif';
-
   if (mode === MODE.LIBRE) {
-    ctx.fillText('Grip (gachette laterale) pour attraper le modele', PW / 2, 100);
+    ctx.fillStyle = '#aaa'; ctx.font = '13px sans-serif';
+    ctx.fillText('Grip pour attraper la cible actuelle', PW / 2, 150);
+    ctx.fillText('2 grips en meme temps = zoom', PW / 2, 172);
   } else if (enPrecision) {
-    ctx.font = 'bold 16px sans-serif';
+    ctx.font = 'bold 15px sans-serif';
     bouton(ZP.translater, mode === MODE.GIZMO_T ? '#2c5aa0' : '#333', 'TRANSLATER', mode === MODE.GIZMO_T);
     bouton(ZP.tourner,    mode === MODE.GIZMO_R ? '#2c5aa0' : '#333', 'TOURNER',    mode === MODE.GIZMO_R);
-    ctx.font = '13px sans-serif'; ctx.fillStyle = '#aaa';
-    ctx.fillText('Clic sur le modele = deplacer le centre de rotation', PW / 2, 135);
+    ctx.font = 'bold 13px sans-serif';
+    bouton(ZP.reset0Pos, '#444', '0 POSITION', false);
+    bouton(ZP.reset0Rot, '#444', '0 ROTATION', false);
+    ctx.fillStyle = '#aaa'; ctx.font = '12px sans-serif';
+    ctx.fillText('Petits "0" sur les fleches/anneaux = axe par axe', PW / 2, 226);
+    ctx.fillStyle = '#8fd6ff';
+    ctx.fillText('Echelle : ' + Math.round(pourcentageEchelle()) + ' % du reel', PW / 2, 244);
   } else if (mode === MODE.COULEUR) {
     for (var i = 0; i < PALETTE.length; i++) {
       var z = zoneCouleur(i);
@@ -498,17 +854,24 @@ function dessinerPanneau() {
       ctx.lineWidth = (i === couleurIdx) ? 5 : 1;
       rr(ctx, z.x, z.y, z.w, z.h, 8); ctx.stroke();
     }
-    ctx.font = 'bold 14px sans-serif';
+    ctx.font = 'bold 13px sans-serif';
     bouton(ZC.auto,  '#444', 'COLORIER AUTO', false);
     bouton(ZC.reset, '#444', 'REINITIALISER', false);
   }
 
+  // --- Annuler / Refaire ---
+  ctx.font = 'bold 15px sans-serif';
+  bouton(ZU.annuler, historique.length ? '#444' : '#262626', 'ANNULER', false, historique.length ? '#fff' : '#666');
+  bouton(ZU.refaire, refaire.length    ? '#444' : '#262626', 'REFAIRE', false, refaire.length    ? '#fff' : '#666');
+
+  // --- Toujours visibles ---
   ctx.font = 'bold 16px sans-serif';
   bouton(ZB.replacer, '#2c5aa0', 'REPLACER SUR LA TABLE', false);
   bouton(ZB.quitter,  '#8e2b2b', 'QUITTER', false);
 
-  ctx.fillStyle = '#666'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText(nomModeleCourant, PW / 2, PH - 10);
+  ctx.fillStyle = '#666'; ctx.font = '11px sans-serif';
+  var infoCible = cibleType === CIBLE.MODELE ? '' : (' - ' + selection.length + ' piece(s) selectionnee(s)');
+  ctx.fillText(nomModeleCourant + infoCible, PW / 2, PH - 10);
 
   tex.needsUpdate = true;
 }
@@ -518,15 +881,25 @@ function zoneTouchee(uv) {
   var cy = (1 - uv.y) * PH;
   function dans(z) { return cx >= z.x && cx <= z.x + z.w && cy >= z.y && cy <= z.y + z.h; }
 
+  if (dans(ZA.modele)) return 'cible-modele';
+  if (dans(ZA.piece))  return 'cible-piece';
+  if (dans(ZA.groupe)) return 'cible-groupe';
+  if (cibleType !== CIBLE.MODELE && dans(ZA.choisir)) return 'choisir';
+
   if (dans(ZT.tabLibre))     return 'tabLibre';
   if (dans(ZT.tabPrecision)) return 'tabPrecision';
   if (dans(ZT.tabCouleur))   return 'tabCouleur';
-  if (dans(ZB.replacer))     return 'replacer';
-  if (dans(ZB.quitter))      return 'quitter';
+
+  if (dans(ZU.annuler))  return 'annuler';
+  if (dans(ZU.refaire))  return 'refaire';
+  if (dans(ZB.replacer)) return 'replacer';
+  if (dans(ZB.quitter))  return 'quitter';
 
   if (mode === MODE.GIZMO_T || mode === MODE.GIZMO_R) {
     if (dans(ZP.translater)) return 'translater';
     if (dans(ZP.tourner))    return 'tourner';
+    if (dans(ZP.reset0Pos))  return 'reset0Pos';
+    if (dans(ZP.reset0Rot))  return 'reset0Rot';
   } else if (mode === MODE.COULEUR) {
     if (dans(ZC.auto))  return 'auto';
     if (dans(ZC.reset)) return 'reset';
@@ -537,13 +910,21 @@ function zoneTouchee(uv) {
 
 function traiterClicPanneau(zone) {
   if (!zone) return;
+  if (zone === 'cible-modele') { definirCibleType(CIBLE.MODELE); return; }
+  if (zone === 'cible-piece')  { definirCibleType(CIBLE.PIECE); return; }
+  if (zone === 'cible-groupe') { definirCibleType(CIBLE.GROUPE); return; }
+  if (zone === 'choisir')      { enChoixCible = !enChoixCible; majPanneau(); return; }
   if (zone === 'tabLibre')     { definirMode(MODE.LIBRE); return; }
   if (zone === 'tabPrecision') { definirMode(MODE.GIZMO_T); return; }
   if (zone === 'tabCouleur')   { definirMode(MODE.COULEUR); return; }
   if (zone === 'translater')   { definirMode(MODE.GIZMO_T); return; }
   if (zone === 'tourner')      { definirMode(MODE.GIZMO_R); return; }
+  if (zone === 'reset0Pos')    { resetPosition(); return; }
+  if (zone === 'reset0Rot')    { resetRotation(); return; }
   if (zone === 'auto')         { colorierAutomatiquement(); return; }
   if (zone === 'reset')        { reinitialiserCouleurs(); return; }
+  if (zone === 'annuler')      { annuler(); return; }
+  if (zone === 'refaire')      { retablir(); return; }
   if (zone === 'replacer')     { replacer(); return; }
   if (zone === 'quitter')      { quitterAR(); return; }
   if (zone.indexOf('couleur') === 0) {
@@ -556,9 +937,21 @@ var panneau = new THREE.Mesh(
   new THREE.PlaneGeometry(PLANE_W, PLANE_H),
   new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide })
 );
-panneau.position.set(0, 0.42, 0);
+panneau.position.set(0, 0.5, 0);
 panneau.visible = false;
 anchor.add(panneau);
+
+// ============================================================================
+//  MODE (comment on manipule la cible courante)
+// ============================================================================
+var MODE = { LIBRE: 'libre', GIZMO_T: 'gizmo-t', GIZMO_R: 'gizmo-r', COULEUR: 'couleur' };
+var mode = MODE.LIBRE;
+
+function definirMode(m) {
+  mode = m;
+  dragEtat = null;
+  majPanneau();
+}
 
 // ============================================================================
 //  MANETTES
@@ -592,19 +985,24 @@ function gererSelectStart(idx, ctrl) {
     return;
   }
 
+  if (enChoixCible) { gererClicSelection(ray); return; }
+
   if (mode === MODE.GIZMO_T || mode === MODE.GIZMO_R) {
     var typeActif = (mode === MODE.GIZMO_T) ? 'translate' : 'rotate';
-    var poigneesActives = poignees.filter(function (pg) { return pg.type === typeActif; });
+    var typeZero  = (mode === MODE.GIZMO_T) ? 'zero-t' : 'zero-r';
+    var poigneesActives = poignees.filter(function (pg) { return pg.type === typeActif || pg.type === typeZero; });
     var hitsPoignee = ray.intersectObjects(poigneesActives.map(function (pg) { return pg.mesh; }), false);
     if (hitsPoignee.length) {
       var poignee = poigneesActives.filter(function (pg) { return pg.mesh === hitsPoignee[0].object; })[0];
+      if (poignee.type === 'zero-t') { resetAxeTranslation(poignee.axeLettre); return; }
+      if (poignee.type === 'zero-r') { resetAxeRotation(poignee.axeLettre); return; }
       if (mode === MODE.GIZMO_T) demarrerDragTranslate(idx, poignee);
       else demarrerDragRotate(idx, poignee);
       return;
     }
     if (pieces.length) {
       var hitsModele = ray.intersectObjects(pieces, false);
-      if (hitsModele.length) reposerPivot(hitsModele[0].point);
+      if (hitsModele.length) reposerCible(hitsModele[0].point);
     }
     return;
   }
@@ -626,23 +1024,38 @@ controllers.forEach(function (ctrl, idx) {
   ctrl.add(ligne);
 
   ctrl.addEventListener('squeezestart', function () {
-    if (!anchorPlaced || mode !== MODE.LIBRE || grabIdx !== -1) return;
+    if (!anchorPlaced) return;
+    gripEtat[idx] = true;
+    if (gripEtat[0] && gripEtat[1]) {
+      if (grabIdx !== -1) terminerGrab();
+      demarrerZoom();
+      return;
+    }
+    if (mode !== MODE.LIBRE || grabIdx !== -1 || modeZoom) return;
+    var c = cibleCourante();
+    if (!c) return;
     var p = new THREE.Vector3();
     ctrl.getWorldPosition(p);
     if (pointDeGrabProche(p)) {
       grabIdx = idx;
-      ctrl.attach(pivot);
+      grabAvant = capturerMatricesMonde(objetsCiblesActuels());
+      ctrl.attach(c);
     }
   });
   ctrl.addEventListener('squeezeend', function () {
+    gripEtat[idx] = false;
+    if (modeZoom) { if (!gripEtat[0] && !gripEtat[1]) terminerZoom(); return; }
     if (grabIdx !== idx) return;
-    anchor.attach(pivot);
-    grabIdx = -1;
+    terminerGrab();
   });
 
   ctrl.addEventListener('selectstart', function () { gererSelectStart(idx, ctrl); });
   ctrl.addEventListener('selectend', function () {
-    if (dragEtat && dragEtat.idx === idx) dragEtat = null;
+    if (dragEtat && dragEtat.idx === idx) {
+      var apres = capturerMatricesMonde(dragEtat.objets);
+      enregistrerTransformSiChange(dragEtat.objets, dragEtat.avant, apres);
+      dragEtat = null;
+    }
   });
 });
 
@@ -700,8 +1113,23 @@ renderer.setAnimationLoop(function (time, frame) {
     panneau.lookAt(camPos);
   }
 
+  if (modeZoom) majZoom();
   if (dragEtat) { if (dragEtat.mode === 'translate') majDragTranslate(); else majDragRotate(); }
-  if (gizmoTranslate.visible || gizmoRotate.visible) orienterGizmo();
+
+  // Gizmo : visible seulement si une cible existe, repositionne sur elle
+  // chaque frame (enfant de anchor, donc taille ecran stable et toujours
+  // aligne sur la table sans calcul de contre-rotation).
+  var cibleActuelle = cibleCourante();
+  var gizmoActif = !!cibleActuelle && (mode === MODE.GIZMO_T || mode === MODE.GIZMO_R);
+  gizmoTranslate.visible = gizmoActif && mode === MODE.GIZMO_T;
+  gizmoRotate.visible    = gizmoActif && mode === MODE.GIZMO_R;
+  if (gizmoActif) {
+    var posMonde = new THREE.Vector3();
+    cibleActuelle.getWorldPosition(posMonde);
+    var posLocale = anchor.worldToLocal(posMonde);
+    gizmoTranslate.position.copy(posLocale);
+    gizmoRotate.position.copy(posLocale);
+  }
 
   if (panneauSale) dessinerPanneau();
 
@@ -713,6 +1141,7 @@ document.getElementById('btnCommencer').addEventListener('click', function () {
   var fichier = selectModele.value;
   if (!fichier) { status.textContent = 'Choisissez un modele'; return; }
   nomModeleCourant = selectModele.options[selectModele.selectedIndex].textContent;
+  historique = []; refaire = [];
 
   // Certains casques/navigateurs rejettent la session en bloc si UNE SEULE
   // fonctionnalite optionnelle listee n'est pas accordable (alors que la
@@ -750,10 +1179,18 @@ document.getElementById('btnCommencer').addEventListener('click', function () {
         reticle.visible = false;
         preview.visible = false;
         panneau.visible = false;
+        relacherSelection();
+        selection = [];
+        piecesSurlignees = [];
+        cibleType = CIBLE.MODELE;
+        enChoixCible = false;
         definirMode(MODE.LIBRE);
+        grabIdx = -1; grabAvant = null;
+        modeZoom = false; gripEtat = [false, false];
 
         if (racineModele) { pivot.remove(racineModele); racineModele = null; }
         pieces = [];
+        piecesMobiles = [];
         carPret = false;
       });
     }).catch(function (e2) {
