@@ -253,6 +253,7 @@ function annuler() {
   var a = historique.pop();
   appliquerAction(a, false);
   refaire.push(a);
+  afficherIndicateurAction('ANNULE', libelleTypeAction(a));
   majPanneau();
 }
 function retablir() {
@@ -260,6 +261,7 @@ function retablir() {
   var a = refaire.pop();
   appliquerAction(a, true);
   historique.push(a);
+  afficherIndicateurAction('RETABLI', libelleTypeAction(a));
   majPanneau();
 }
 
@@ -390,18 +392,12 @@ function restaurerOpaciteDe(pieces_) {
       var mats = Array.isArray(o.material) ? o.material : [o.material];
       mats.forEach(function (m) { m.opacity = 1; });
     });
+    piece.userData.niveauTransp = 0;
+    piece.userData.fantome = false;
+    var iF = piecesFantome.indexOf(piece);
+    if (iF !== -1) piecesFantome.splice(iF, 1);
+    majEmissiveFantome(piece, false);
   });
-}
-// Convertit une position de joystick (0..1, deja en valeur absolue) en
-// opacite, avec une progression VOLONTAIREMENT NON LINEAIRE : fine et lente
-// pres du centre (opaque -> transparent), puis descend jusqu'a un niveau
-// "fantome" (quasi invisible mais jamais totalement invisible) en fin de
-// course - plus precis a piloter qu'une simple rampe lineaire, qui filait
-// trop vite vers la transparence.
-function opaciteDepuisJoystick(t) {
-  var a = Math.min(1, Math.abs(t));
-  var facteur = Math.pow(a, 1.6);
-  return Math.max(0.04, 1 - facteur * 0.97);
 }
 function appliquerTransparencePiece(piece, opacite) {
   piece.traverse(function (o) {
@@ -412,6 +408,114 @@ function appliquerTransparencePiece(piece, opacite) {
 }
 function appliquerTransparenceSelection(opacite) {
   selection.forEach(function (piece) { appliquerTransparencePiece(piece, opacite); });
+}
+
+// ============================================================================
+//  TRANSPARENCE AU JOYSTICK : reglage en VITESSE (pas en position absolue) -
+//  la valeur "reste" quand on relache le joystick (qui revient seul au
+//  centre) ou la gachette, contrairement a une ancienne version ou relacher
+//  le joystick faisait retomber l'opacite a 1 instantanement. Echelle 0-100
+//  (0 = opaque, 100 = transparent), puis un CRAN SUPPLEMENTAIRE ("fantome")
+//  atteint en poussant encore au-dela de 100 : opacite tres faible fixe +
+//  halo bleu emissif, jusqu'a ce qu'on repousse dans l'autre sens.
+// ============================================================================
+var VITESSE_TRANSP = 130; // points de niveau (0-100) par seconde a pleine deflexion
+var piecesFantome = [];   // pieces actuellement en mode fantome (maintenance par frame)
+var COULEUR_FANTOME = 0x3377ff;
+
+// objet peut etre une piece racine (Object3D avec enfants) ou un mesh
+// individuel isole - Object3D.traverse() existe sur les deux (un mesh sans
+// enfant se visite juste lui-meme), donc pas besoin de distinguer les cas.
+function majEmissiveFantome(objet, actif) {
+  var couleur = actif ? COULEUR_FANTOME
+    : (selection.indexOf(trouverPieceRacine(objet)) !== -1 ? 0x554400 : 0x000000);
+  objet.traverse(function (o) {
+    if (!o.isMesh) return;
+    var mats = Array.isArray(o.material) ? o.material : [o.material];
+    mats.forEach(function (m) { if (m.emissive) m.emissive.setHex(couleur); });
+  });
+}
+
+// etat = objet portant .niveauTransp/.fantome (userData d'une piece pour un
+// reglage individuel au laser, ou un objet dedie pour un groupe/selection
+// entier qui doit avancer bloc par bloc, sans desynchronisation possible
+// entre ses pieces). appliquer(opacite) et emissifs(actif) permettent a
+// l'appelant de cibler UNE piece ou TOUTE une selection avec la meme
+// logique. Retourne le texte a afficher dans l'etiquette flottante.
+function ajusterNiveauTransparence(etat, axisValue, dt, appliquer, emissifs) {
+  if (etat.niveauTransp === undefined) etat.niveauTransp = 0;
+  if (etat.fantome === undefined) etat.fantome = false;
+
+  if (etat.fantome) {
+    if (axisValue < 0) { // repousse vers l'opaque -> sort du fantome
+      etat.fantome = false;
+      etat.niveauTransp = 100;
+      appliquer(0);
+      emissifs(false);
+      return '0 %';
+    }
+    return 'FANTOME';
+  }
+
+  var niveau = etat.niveauTransp + axisValue * VITESSE_TRANSP * dt;
+  if (niveau > 100) {
+    etat.fantome = true;
+    etat.niveauTransp = 100;
+    appliquer(0.16);
+    emissifs(true);
+    return 'FANTOME';
+  }
+  etat.niveauTransp = Math.max(0, niveau);
+  appliquer(1 - etat.niveauTransp / 100);
+  return Math.round(100 - etat.niveauTransp) + ' %';
+}
+
+// Etat PARTAGE pour l'ajustement via SELECTION (A+gachette) : toutes les
+// pieces choisies avancent forcement ensemble (meme increment chaque
+// frame), donc un seul etat suffit - pas de risque de desync entre elles.
+var etatTranspSelection = { niveauTransp: 0, fantome: false };
+function appliquerFantomeSelection(actif) {
+  selection.forEach(function (piece) {
+    if (actif) { if (piecesFantome.indexOf(piece) === -1) piecesFantome.push(piece); }
+    else { var i = piecesFantome.indexOf(piece); if (i !== -1) piecesFantome.splice(i, 1); }
+    majEmissiveFantome(piece, actif);
+  });
+}
+function appliquerFantomePieceUnique(piece, actif) {
+  if (actif) { if (piecesFantome.indexOf(piece) === -1) piecesFantome.push(piece); }
+  else { var i = piecesFantome.indexOf(piece); if (i !== -1) piecesFantome.splice(i, 1); }
+  majEmissiveFantome(piece, actif);
+}
+
+// Etiquette flottante "NN %" / "FANTOME", ancree AU-DESSUS de la piece en
+// cours de reglage, visible seulement pendant l'ajustement actif (contrairement
+// a l'indicateur Annuler/Refaire, pas besoin qu'elle persiste apres coup :
+// la transparence du modele lui-meme reste le retour visuel permanent).
+var tlc = document.createElement('canvas');
+tlc.width = 200; tlc.height = 70;
+var tlctx = tlc.getContext('2d');
+var texTransp = new THREE.CanvasTexture(tlc);
+var spriteTransp = new THREE.Sprite(new THREE.SpriteMaterial({ map: texTransp, depthTest: false, transparent: true }));
+spriteTransp.scale.set(0.09, 0.09 * 70 / 200, 1);
+spriteTransp.renderOrder = 1600;
+spriteTransp.visible = false;
+scene.add(spriteTransp);
+function afficherLabelTransparence(objet, texte, fantome) {
+  tlctx.clearRect(0, 0, 200, 70);
+  rr(tlctx, 2, 2, 196, 66, 14);
+  tlctx.fillStyle = fantome ? 'rgba(30,50,95,0.88)' : 'rgba(20,20,20,0.85)'; tlctx.fill();
+  rr(tlctx, 2, 2, 196, 66, 14);
+  tlctx.strokeStyle = fantome ? '#5588ff' : '#8fd6ff'; tlctx.lineWidth = 3; tlctx.stroke();
+  tlctx.fillStyle = fantome ? '#88aaff' : '#8fd6ff'; tlctx.font = 'bold 26px sans-serif';
+  tlctx.textAlign = 'center'; tlctx.textBaseline = 'middle';
+  tlctx.fillText(texte, 100, 37);
+  texTransp.needsUpdate = true;
+
+  var box = new THREE.Box3().setFromObject(objet);
+  var centre = new THREE.Vector3(); box.getCenter(centre);
+  spriteTransp.position.copy(centre);
+  spriteTransp.position.y = box.max.y + 0.04;
+  spriteTransp.visible = true;
 }
 
 function relacherSelection() {
@@ -453,6 +557,7 @@ function desactiverSelectionAB() {
   // (et on enregistre le deplacement pour Annuler) AVANT de la detruire.
   if (grabIdx !== -1) terminerGrab();
   restaurerOpaciteDe(selection);
+  etatTranspSelection = { niveauTransp: 0, fantome: false };
   selection = [];
   surlignerSelection();
   relacherSelection();
@@ -1263,6 +1368,49 @@ function majFlash() {
   flashPhoto.material.opacity *= 0.82;
 }
 
+// Etiquette "ANNULE : ..." / "RETABLI : ..." qui reste affichee 1 seconde
+// (temps REEL, pas un nombre de frames - le Quest peut tourner a 72/90/120Hz)
+// a chaque annuler/refaire, quel que soit le declencheur (joystick, bouton
+// du menu, barre bureau). Attachee a la camera comme le flash photo.
+var icIndic = document.createElement('canvas');
+icIndic.width = 360; icIndic.height = 90;
+var ictxIndic = icIndic.getContext('2d');
+var texIndic = new THREE.CanvasTexture(icIndic);
+var indicAction = new THREE.Sprite(new THREE.SpriteMaterial({ map: texIndic, depthTest: false, transparent: true }));
+indicAction.scale.set(0.2, 0.2 * 90 / 360, 1);
+indicAction.position.set(0, 0.09, -0.4);
+indicAction.renderOrder = 2001;
+indicAction.visible = false;
+camera.add(indicAction);
+var indicActionJusqua = 0;
+function libelleTypeAction(a) {
+  switch (a && a.type) {
+    case 'transform':    return 'deplacement';
+    case 'echelle':       return 'zoom';
+    case 'couleur':        return 'couleur';
+    case 'couleur-lot':      return 'couleur';
+    default: return '';
+  }
+}
+function afficherIndicateurAction(titre, sousTitre) {
+  ictxIndic.clearRect(0, 0, 360, 90);
+  rr(ictxIndic, 2, 2, 356, 86, 18); ictxIndic.fillStyle = 'rgba(20,20,20,0.92)'; ictxIndic.fill();
+  rr(ictxIndic, 2, 2, 356, 86, 18); ictxIndic.strokeStyle = '#ffee00'; ictxIndic.lineWidth = 3; ictxIndic.stroke();
+  ictxIndic.fillStyle = '#ffee00'; ictxIndic.textAlign = 'center';
+  ictxIndic.font = 'bold 28px sans-serif'; ictxIndic.textBaseline = 'middle';
+  ictxIndic.fillText(titre, 180, sousTitre ? 34 : 46);
+  if (sousTitre) {
+    ictxIndic.font = '20px sans-serif';
+    ictxIndic.fillText(sousTitre, 180, 64);
+  }
+  texIndic.needsUpdate = true;
+  indicAction.visible = true;
+  indicActionJusqua = performance.now() + 1000;
+}
+function majIndicateurAction(tempsActuel) {
+  if (indicAction.visible && tempsActuel > indicActionJusqua) indicAction.visible = false;
+}
+
 function entrerModePhoto() { modePhoto = true; cadrePhoto.visible = true; }
 function sortirModePhoto() { modePhoto = false; cadrePhoto.visible = false; }
 
@@ -1560,7 +1708,16 @@ function zoneRoue(uv) {
 // niveau, a chaque niveau, meme apres avoir declenche une action terminale.
 function traiterClicRoue(zone) {
   if (!zone) return;
-  if (zone === 'back') { roueStack.pop(); majPanneau(); return; }
+  if (zone === 'back') {
+    var noeudQuitte = roueStack[roueStack.length - 1];
+    roueStack.pop();
+    // Quitter le sous-menu Mesures desarme le mode mesure : sinon un clic
+    // sur le modele continuait a prendre des points de mesure alors que le
+    // menu affiche est deja referme, ce qui est trompeur.
+    if (noeudQuitte && noeudQuitte.mesures && mode === MODE.MESURE) definirMode(MODE.LIBRE);
+    majPanneau();
+    return;
+  }
   if (zone.couleur !== undefined) { couleurIdx = zone.idx; majPanneau(); return; }
   if (zone.mesureId !== undefined) { afficherMesureParId(zone.mesureId); return; }
   if (zone.action) zone.action();
@@ -1685,22 +1842,25 @@ function pollAppelRoue() {
   });
 }
 
-// Annuler/Refaire au joystick gauche/droite (axes[2] = axe X du pouce, sur
-// les 2 manettes) - un seul declenchement par poussee (rearme quand le
-// joystick revient pres du centre), pour ne pas annuler 60 fois par seconde
-// tant qu'on le maintient. Reste egalement disponible dans le menu Actions.
+// Annuler/Refaire au joystick gauche/droite (axes[2] = axe X du pouce),
+// UNIQUEMENT depuis la manette qui porte le menu (menuCtrlIdx) - sur
+// demande explicite, pour eviter tout conflit avec l'autre manette (qui
+// sert a pointer/valider). Un seul declenchement par poussee (rearme quand
+// le joystick revient pres du centre), pour ne pas annuler 60 fois par
+// seconde tant qu'on le maintient. Reste egalement disponible dans le menu
+// Actions.
 var UNDO_REDO_SEUIL = 0.6;
 var undoRedoArme = [true, true];
 function pollUndoRedoJoystick() {
-  controllers.forEach(function (ctrl, i) {
-    var gp = ctrl.userData.src && ctrl.userData.src.gamepad;
-    var x = (gp && gp.axes && gp.axes.length > 2) ? (gp.axes[2] || 0) : 0;
-    if (Math.abs(x) < UNDO_REDO_SEUIL * 0.5) { undoRedoArme[i] = true; return; }
-    if (!undoRedoArme[i]) return;
-    undoRedoArme[i] = false;
-    if (x <= -UNDO_REDO_SEUIL) annuler();
-    else if (x >= UNDO_REDO_SEUIL) retablir();
-  });
+  var i = menuCtrlIdx;
+  var ctrl = controllers[i];
+  var gp = ctrl.userData.src && ctrl.userData.src.gamepad;
+  var x = (gp && gp.axes && gp.axes.length > 2) ? (gp.axes[2] || 0) : 0;
+  if (Math.abs(x) < UNDO_REDO_SEUIL * 0.5) { undoRedoArme[i] = true; return; }
+  if (!undoRedoArme[i]) return;
+  undoRedoArme[i] = false;
+  if (x <= -UNDO_REDO_SEUIL) annuler();
+  else if (x >= UNDO_REDO_SEUIL) retablir();
 }
 
 // Laser + pointeur : visibles EN PERMANENCE des que le modele est charge
@@ -1904,7 +2064,17 @@ controllers.forEach(function (ctrl, idx) {
 // ============================================================================
 //  BOUCLE DE RENDU
 // ============================================================================
+var dernierTemps = null;
 renderer.setAnimationLoop(function (time, frame) {
+  // Delta de temps REEL (pas un nombre fixe de frames) - le Quest peut
+  // tourner a 72/90/120Hz, un reglage en VITESSE (transparence) doit rester
+  // a la meme vitesse perçue quel que soit le taux de rafraichissement.
+  // Plafonne a 0.1s pour eviter un saut apres un long arret (onglet en
+  // arriere-plan, etc).
+  var dt = dernierTemps === null ? 0 : Math.min(0.1, (time - dernierTemps) / 1000);
+  dernierTemps = time;
+  majIndicateurAction(time);
+
   if (frame && !anchorPlaced) {
     var session  = renderer.xr.getSession();
     var refSpace = renderer.xr.getReferenceSpace();
@@ -2006,21 +2176,41 @@ renderer.setAnimationLoop(function (time, frame) {
     pollAppelRoue();
     pollUndoRedoJoystick();
     pollSurvolRoue();
+    var transpAffichee = false;
     controllers.forEach(function (ctrl, ci) {
       majLaser(ci);
       var gp = ctrl.userData.src && ctrl.userData.src.gamepad;
       if (boutonAppuye(ctrl, 4) && selection.length) {
         if (gp && gp.axes && gp.axes.length > 3) {
           var t = gp.axes[3] || 0;
-          appliquerTransparenceSelection(opaciteDepuisJoystick(t));
+          if (Math.abs(t) > 0.08) {
+            var texteSel = ajusterNiveauTransparence(etatTranspSelection, t, dt,
+              appliquerTransparenceSelection, appliquerFantomeSelection);
+            afficherLabelTransparence(selection[0], texteSel, etatTranspSelection.fantome);
+            transpAffichee = true;
+          }
         }
       } else if (selectTenu[ci] && ctrl.userData.pieceLaser) {
         var tLaser = (gp && gp.axes && gp.axes.length > 3) ? (gp.axes[3] || 0) : 0;
         if (Math.abs(tLaser) > 0.08) {
-          appliquerTransparencePiece(ctrl.userData.pieceLaser, opaciteDepuisJoystick(tLaser));
+          var piece = ctrl.userData.pieceLaser;
+          var texteLaser = ajusterNiveauTransparence(piece.userData, tLaser, dt,
+            function (op) { appliquerTransparencePiece(piece, op); },
+            function (actif) { appliquerFantomePieceUnique(piece, actif); });
+          afficherLabelTransparence(piece, texteLaser, piece.userData.fantome);
+          transpAffichee = true;
         }
       }
     });
+    if (!transpAffichee) spriteTransp.visible = false;
+  }
+
+  // Les pieces en mode fantome gardent leur halo bleu meme hors ajustement
+  // actif (l'etat "reste" tant qu'on ne repousse pas le joystick dans
+  // l'autre sens) - un autre systeme (survol, selection) pourrait avoir
+  // ecrase l'emissive entre-temps, donc on la reaffirme chaque frame.
+  if (piecesFantome.length) {
+    piecesFantome.forEach(function (p) { majEmissiveFantome(p, true); });
   }
 
   if (panneauSale) dessinerRoue();
@@ -2103,6 +2293,9 @@ function reinitialiserApresSession() {
   pieceSurvolee = [null, null];
   objetSurvolePrecedent = [null, null];
   idHoverRoue = null;
+  piecesFantome = [];
+  etatTranspSelection = { niveauTransp: 0, fantome: false };
+  spriteTransp.visible = false;
 }
 
 // ============================================================================
