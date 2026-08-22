@@ -1,4 +1,4 @@
-# Visionneuse CAO en réalité mixte — v1.9.0
+# Visionneuse CAO en réalité mixte — v1.10.0
 
 Application WebXR pour Meta Quest 3 : pose n'importe quel modèle 3D (issu
 d'une modélisation 3DEXPERIENCE) sur une vraie table, manipule-le à main
@@ -67,7 +67,7 @@ gâchette.
 | **Mesurer une distance** (menu Mesures) | Vise un 1er point puis un 2e avec la **gâchette** : ligne + distance réelle en mm affichées (indépendant du zoom en cours) - chaque mesure est gardée dans l'historique et **suit le modèle** (et chaque pièce déplacée indépendamment) si tu le bouges ensuite |
 | **Revoir une mesure déjà prise** | Menu Mesures : la liste affiche toutes les mesures (une seule à l'écran à la fois), clique sur une entrée pour la rappeler |
 | **Effacer une mesure** | Vise la petite croix rouge en haut à droite de sa case, **gâchette** - la retire de l'historique |
-| **Prendre une photo** (menu Capture > Cadre) | Oriente la pièce face à toi, choisis Cadre : un cadre jaune apparaît (aperçu de ce qui sera capturé). Le prochain appui sur la **gâchette** (n'importe laquelle) déclenche un **flash blanc** puis affiche un aperçu flottant ; reclic dessus pour le fermer |
+| **Prendre une photo** (menu Capture > Cadre) | Oriente la pièce face à toi, choisis Cadre : un cadre jaune apparaît (aperçu de ce qui sera capturé). Le prochain appui sur la **gâchette** (n'importe laquelle) déclenche un **flash blanc** puis affiche un aperçu flottant ; reclic dessus pour le fermer. Si Google Drive est configuré (voir plus bas), la photo est aussi **envoyée automatiquement** dans le dossier Drive dédié |
 | **Annuler / Refaire** | Menu Actions, **ou** pousse le **joystick à gauche/droite** (n'importe quelle manette) |
 
 L'application s'ouvre toujours **modèle entier** sélectionné, pas de menu
@@ -138,6 +138,102 @@ logiciel gratuit : **FreeCAD**.
 > par pièce. Utilise l'onglet COULEUR (manuel ou « COLORIER AUTO ») pour
 > distinguer les pièces une fois dans le casque.
 
+## Modèles et photos via Google Drive (optionnel, recommandé)
+
+Depuis la v1.10.0, il existe une **deuxième façon** d'ajouter un modèle,
+plus simple que `modeles.json` : le déposer dans un dossier Google Drive
+partagé. Il apparaît automatiquement dans la liste au prochain
+rechargement de la page, marqué « (Drive) ». Les deux méthodes
+cohabitent : les modèles de `modeles.json` restent toujours disponibles.
+
+La prise de photo peut, de la même façon, être automatiquement enregistrée
+dans un dossier Drive (en plus de l'aperçu flottant dans le casque).
+
+C'est **optionnel** : tant que `drive-config.js` n'est pas rempli, tout le
+reste de l'application fonctionne exactement comme avant, sans rien
+demander à personne (pas d'erreur, pas de blocage).
+
+**Pourquoi 2 réglages différents (une clé API + un script) ?** Lire un
+dossier Drive et écrire dedans (une photo) ne demandent pas la même chose
+niveau sécurité :
+- **Lire** peut se faire avec une simple clé, restreinte au strict
+  nécessaire (lecture seule, uniquement sur ce site).
+- **Écrire** demanderait normalement de se connecter avec un compte
+  Google — impossible à faire depuis le casque en pleine session (une
+  fenêtre de connexion **casserait la session VR**). On contourne ça avec
+  un petit script qui tourne sous TON compte Google et reçoit juste les
+  photos, sans jamais demander de connexion au casque.
+
+### A. Faire apparaître des modèles depuis un dossier Drive
+
+1. Va sur **[console.cloud.google.com](https://console.cloud.google.com/)**
+   et connecte-toi avec le compte Google qui possède le dossier de
+   modèles.
+2. En haut de la page, choisis un projet existant ou clique sur
+   « Nouveau projet » (donne-lui un nom, par exemple `gmp-visu-vr`).
+3. Menu **☰ > APIs et services > Bibliothèque**. Cherche
+   **« Google Drive API »**, ouvre-la, clique sur **Activer**.
+4. Menu **☰ > APIs et services > Identifiants**. Clique sur
+   **« + Créer des identifiants »** → **« Clé API »**. Une longue chaîne
+   apparaît (commence par `AIza...`) : copie-la de côté.
+5. Clique sur **« Restreindre la clé »** (fortement recommandé) :
+   - *Restrictions relatives aux applications* → **Référents HTTP (sites
+     web)** → ajoute `https://gmpbordeaux.fr/*`
+   - *Restrictions relatives aux API* → **Restreindre la clé** → coche
+     uniquement **Google Drive API**
+   - **Enregistrer**.
+6. Dans Google Drive, crée (ou choisis) le dossier qui contiendra les
+   `.glb`. Clic droit dessus → **Partager** → change l'accès général en
+   **« Toute personne disposant du lien »**, rôle **Lecteur**.
+7. Copie le lien de partage. L'ID du dossier est la partie après
+   `/folders/` dans ce lien
+   (`https://drive.google.com/drive/folders/`**`CETTE_PARTIE_LA`**`?...`).
+8. Ouvre **`drive-config.js`** avec le Bloc-notes, remplace :
+   - `apiKey` par la clé copiée à l'étape 4
+   - `folderId` par l'ID copié à l'étape 7
+9. Republie sur GitHub Pages (voir plus bas). Dépose un `.glb` dans le
+   dossier Drive : il apparaît dans la liste au rechargement de la page,
+   sous le nom du fichier (suivi de « (Drive) »).
+
+> ⚠️ Cette clé sera visible dans le code source de la page (n'importe qui
+> peut l'y voir) — c'est normal et volontaire pour ce type de clé
+> restreinte en lecture seule : ce n'est pas un mot de passe, et les
+> restrictions de l'étape 5 l'empêchent d'être utilisée ailleurs que sur
+> ce site.
+
+### B. Enregistrer automatiquement les photos dans Drive
+
+1. Dans Google Drive, crée un dossier dédié aux photos (peut être
+   différent de celui des modèles). Copie son ID (même méthode qu'au
+   point 7 ci-dessus).
+2. Va sur **[script.google.com](https://script.google.com/)**, connecté
+   avec le même compte Google. Clique sur **« Nouveau projet »**.
+3. Ouvre le fichier **`apps-script-photo.gs`** (dans ce dossier), copie
+   tout son contenu, colle-le dans l'éditeur Apps Script (remplace ce qui
+   s'y trouve).
+4. Modifie les 2 lignes en haut du script :
+   - `FOLDER_ID` = l'ID du dossier créé à l'étape 1
+   - `SECRET` = invente un mot de passe simple (garde-le, il ressert à
+     l'étape 8)
+5. Menu **Déployer > Nouveau déploiement**. Type : **Application Web**.
+   - Exécuter en tant que : **Moi**
+   - Qui a accès : **Tout le monde**
+6. Clique sur **Déployer**. Google va demander d'autoriser le script à
+   accéder à ton Drive (normal, c'est le script qui va y écrire) :
+   accepte.
+7. Une **URL se termine par `/exec`** apparaît : copie-la.
+8. Ouvre **`drive-config.js`**, remplace :
+   - `photoUploadUrl` par l'URL copiée à l'étape 7
+   - `photoSecret` par le **même** mot de passe qu'à l'étape 4
+9. Republie sur GitHub Pages. Prends une photo dans l'appli : elle
+   apparaît dans le dossier Drive de l'étape 1 quelques secondes après.
+
+> Si une photo n'arrive pas dans Drive, ce n'est jamais bloquant pour
+> l'appli (l'aperçu flottant dans le casque marche toujours) - vérifie que
+> `photoUploadUrl`/`photoSecret` sont bien identiques des deux côtés
+> (`drive-config.js` et `apps-script-photo.gs`), et que le déploiement
+> Apps Script est bien accessible à « Tout le monde ».
+
 ## Publier une mise à jour en ligne (GitHub Pages)
 
 Le projet est hébergé sur **GitHub Pages**, adresse fixe
@@ -145,9 +241,9 @@ Le projet est hébergé sur **GitHub Pages**, adresse fixe
 - Dépôt : https://github.com/AntoineP3371/gmp-visu-vr (public), branche `main`
 - Pour mettre à jour le site après avoir modifié un fichier :
   `git add -A && git commit -m "..." && git push`, puis attendre ~1 minute.
-- Pense à changer le `?v=X.Y.Z` dans `index.html` (script `app.js`) à
-  chaque nouvelle version, sinon Wolvic garde l'ancienne version en cache
-  jusqu'à 10 minutes.
+- Pense à changer le `?v=X.Y.Z` dans `index.html` (scripts `app.js` ET
+  `drive-config.js`) à chaque nouvelle version, sinon Wolvic garde
+  l'ancienne version en cache jusqu'à 10 minutes.
 
 ## Fichiers
 
@@ -155,7 +251,9 @@ Le projet est hébergé sur **GitHub Pages**, adresse fixe
 |---|---|
 | `index.html` | Écran d'accueil (choix du modèle, bouton d'entrée en AR) |
 | `app.js` | Toute l'application (placement, manipulation, coloration) |
-| `modeles.json` | **Liste des modèles disponibles — le seul fichier à modifier pour en ajouter un** |
+| `modeles.json` | **Liste des modèles locaux — un fichier à modifier pour en ajouter un sans passer par Drive** |
+| `drive-config.js` | **Réglages Google Drive (clé API, dossier, URL Apps Script) — à remplir, voir plus haut** |
+| `apps-script-photo.gs` | Code à coller dans script.google.com pour l'enregistrement des photos (voir plus haut) |
 | `exemple-cric.glb` | Modèle de démonstration fourni avec le projet |
 | `three.min.js` / `GLTFLoader.js` | Bibliothèque 3D (vendored, ne pas modifier) |
 | `server.js` / `serveur.bat` | Serveur local + tunnel HTTPS (pour tester avec le casque) |
@@ -164,7 +262,8 @@ Le projet est hébergé sur **GitHub Pages**, adresse fixe
 
 - Un seul modèle manipulé à la fois (pas de scène à plusieurs objets).
 - Pas d'import de fichier directement dans l'appli : chaque nouveau
-  modèle s'ajoute en copiant le `.glb` dans le dossier + une ligne dans
-  `modeles.json`.
+  modèle s'ajoute soit en le déposant dans le dossier Drive configuré
+  (voir plus haut), soit en copiant le `.glb` dans le dossier + une ligne
+  dans `modeles.json`.
 - Les mouvements internes du mécanisme et les interactions entre pièces
   (deuxième temps du projet) ne sont pas encore implémentés.

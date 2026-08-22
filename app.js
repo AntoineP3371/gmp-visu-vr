@@ -29,22 +29,49 @@ if (!navigator.xr) {
   });
 }
 
-// --- Liste des modeles (modeles.json) ---
-fetch('modeles.json').then(function (r) { return r.json(); }).then(function (liste) {
-  liste.forEach(function (m) {
-    var opt = document.createElement('option');
-    opt.value = m.fichier;
-    opt.textContent = m.nom;
-    selectModele.appendChild(opt);
-  });
-  if (!liste.length) {
-    var opt2 = document.createElement('option');
-    opt2.textContent = 'Aucun modele - voir LISEZ-MOI.md';
-    selectModele.appendChild(opt2);
+// --- Liste des modeles : modeles.json (local) + dossier Google Drive
+// (optionnel, cf drive-config.js) fusionnes dans le meme <select>. Un
+// modele Drive est charge directement depuis son URL de telechargement
+// (alt=media) : chargerModele() n'a besoin d'aucune adaptation, un chemin
+// relatif local et une URL complete se chargent de la meme facon via
+// GLTFLoader.load().
+function ajouterOptionModele(nom, valeur) {
+  var opt = document.createElement('option');
+  opt.value = valeur;
+  opt.textContent = nom;
+  selectModele.appendChild(opt);
+}
+function configDriveValide(cle) {
+  var cfg = window.DRIVE_CONFIG;
+  return !!(cfg && cfg[cle] && cfg[cle].indexOf('COLLE_') !== 0);
+}
+// Ignore silencieusement toute erreur (cle pas encore configuree, pas de
+// reseau, dossier mal partage...) : la liste locale reste toujours
+// disponible independamment de Drive.
+function chargerListeDrive() {
+  if (!configDriveValide('apiKey') || !configDriveValide('folderId')) return Promise.resolve();
+  var cfg = window.DRIVE_CONFIG;
+  var q = encodeURIComponent("'" + cfg.folderId + "' in parents and trashed=false");
+  var url = 'https://www.googleapis.com/drive/v3/files?q=' + q +
+    '&key=' + encodeURIComponent(cfg.apiKey) + '&fields=files(id,name)&pageSize=200';
+  return fetch(url).then(function (r) { return r.json(); }).then(function (data) {
+    (data.files || []).filter(function (f) { return /\.glb$/i.test(f.name); }).forEach(function (f) {
+      var urlModele = 'https://www.googleapis.com/drive/v3/files/' + f.id +
+        '?alt=media&key=' + encodeURIComponent(cfg.apiKey);
+      ajouterOptionModele(f.name.replace(/\.glb$/i, '') + ' (Drive)', urlModele);
+    });
+  }).catch(function () {});
+}
+
+Promise.all([
+  fetch('modeles.json').then(function (r) { return r.json(); }).catch(function () { return []; }),
+  chargerListeDrive()
+]).then(function (resultats) {
+  resultats[0].forEach(function (m) { ajouterOptionModele(m.nom, m.fichier); });
+  if (!selectModele.options.length) {
+    ajouterOptionModele('Aucun modele - voir LISEZ-MOI.md', '');
     document.getElementById('btnCommencer').disabled = true;
   }
-}).catch(function () {
-  status.textContent = 'Erreur: modeles.json introuvable';
 });
 
 // --- Renderer / scene ---
@@ -1258,6 +1285,24 @@ function afficherApercuPhoto(cv) {
   anchor.add(previewPhoto);
 }
 
+// Envoi (fire-and-forget) de la photo a l'Apps Script configure dans
+// drive-config.js. Un simple fetch POST texte/JSON - pas de popup de
+// connexion, donc ca ne casse pas une session WebXR immersive en cours (une
+// authentification OAuth classique, elle, le ferait). Echoue en silence si
+// Drive n'est pas configure ou si le reseau/l'Apps Script ne repond pas :
+// l'apercu flottant existant reste le retour visuel garanti dans tous les cas.
+function televerserPhotoDrive(cv) {
+  if (!configDriveValide('photoUploadUrl')) return;
+  var cfg = window.DRIVE_CONFIG;
+  var base64 = cv.toDataURL('image/png').split(',')[1];
+  var nom = 'photo-' + (nomModeleCourant || 'modele').replace(/[^a-zA-Z0-9-_]+/g, '_') +
+    '-' + new Date().toISOString().replace(/[:.]/g, '-') + '.png';
+  fetch(cfg.photoUploadUrl, {
+    method: 'POST',
+    body: JSON.stringify({ secret: cfg.photoSecret, image: base64, nom: nom })
+  }).catch(function () {});
+}
+
 // Capture hors-ecran a la pose de tete courante (camera est deja synchronisee
 // sur la tete par Three.js pendant une session XR active). Meme technique que
 // VR CEC/peinture.js : rendu dans une cible hors ecran, renderer.xr.enabled
@@ -1306,6 +1351,7 @@ function capturerPhoto() {
   }
   c2.putImageData(img, 0, 0);
   afficherApercuPhoto(cv);
+  televerserPhotoDrive(cv);
   sortirModePhoto();
   declencherFlash();
 }
