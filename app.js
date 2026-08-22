@@ -714,9 +714,29 @@ document.getElementById('btnCommencer').addEventListener('click', function () {
   if (!fichier) { status.textContent = 'Choisissez un modele'; return; }
   nomModeleCourant = selectModele.options[selectModele.selectedIndex].textContent;
 
-  navigator.xr.requestSession('immersive-ar', {
-    optionalFeatures: ['hit-test', 'local-floor', 'local']
-  }).then(function (session) {
+  // Certains casques/navigateurs rejettent la session en bloc si UNE SEULE
+  // fonctionnalite optionnelle listee n'est pas accordable (alors que la
+  // norme dit qu'elle devrait juste etre ignoree) : on retente donc avec une
+  // configuration de plus en plus reduite plutot que d'abandonner d'un coup.
+  // Seul 'local' est reellement utilise par le code (renderer.xr.setReferenceSpaceType) ;
+  // 'hit-test' et 'local-floor' sont un bonus, jamais indispensables.
+  var CONFIGS_AR = [
+    { optionalFeatures: ['hit-test', 'local-floor', 'local'] },
+    { optionalFeatures: ['local'] },
+    {}
+  ];
+
+  function tenterSessionAR(i) {
+    return navigator.xr.requestSession('immersive-ar', CONFIGS_AR[i]).catch(function (e) {
+      if (i + 1 < CONFIGS_AR.length) {
+        status.textContent = 'Config AR ' + (i + 1) + ' refusee, nouvel essai...';
+        return tenterSessionAR(i + 1);
+      }
+      throw e;
+    });
+  }
+
+  tenterSessionAR(0).then(function (session) {
     status.textContent = 'Session creee !';
     renderer.xr.setSession(session).then(function () {
       overlay.style.display = 'none';
