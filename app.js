@@ -128,7 +128,7 @@ function replacer() {
   anchorPlaced = false;
   preview.visible = true;
   panneau.visible = false;
-  definirCibleType(CIBLE.MODELE);
+  desactiverSelectionAB();
   definirMode(MODE.LIBRE);
 }
 function quitterAR() {
@@ -157,12 +157,20 @@ function enregistrer(action) {
   majPanneau();
 }
 
+// object.updateMatrixWorld(true) ne rafraichit que VERS LE BAS (l'objet et
+// ses enfants) - si un parent (pivot, ancre...) vient de changer sans qu'une
+// image ne soit encore passee par renderer.render(), matrixWorld peut rester
+// perime. On repart donc de la racine (scene.updateMatrixWorld) pour etre
+// sur d'avoir un etat a jour de haut en bas avant de lire/ecrire une matrice
+// monde - important pour Annuler/Refaire, qui doivent rester exacts meme si
+// l'action vient d'etre faite a l'instant.
 function capturerMatricesMonde(objets) {
-  return objets.map(function (o) { o.updateMatrixWorld(true); return o.matrixWorld.clone(); });
+  scene.updateMatrixWorld(true);
+  return objets.map(function (o) { return o.matrixWorld.clone(); });
 }
 function definirMatriceMonde(objet, matriceMonde) {
   if (!objet.parent) return;
-  objet.parent.updateMatrixWorld(true);
+  scene.updateMatrixWorld(true);
   var local = objet.parent.matrixWorld.clone().invert().multiply(matriceMonde);
   local.decompose(objet.position, objet.quaternion, objet.scale);
 }
@@ -278,23 +286,25 @@ function chargerModele(fichier) {
 }
 
 // ============================================================================
-//  CIBLE DE MANIPULATION : modele entier / une piece / un groupe de pieces
+//  CIBLE DE MANIPULATION : le modele entier, ou une selection de pieces
+//  construite au vol en tenant A + gachette (peut n'en contenir qu'une, ou
+//  plusieurs = un groupe - meme mecanisme pour les deux cas).
+//  Relacher A desselectionne tout et revient au modele entier.
 // ============================================================================
-var CIBLE = { MODELE: 'modele', PIECE: 'piece', GROUPE: 'groupe' };
-var cibleType     = CIBLE.MODELE;
-var selection      = [];      // pieces actuellement dans la cible piece/groupe
-var enChoixCible    = false;   // vrai pendant qu'on clique les pieces a (de)selectionner
-var piecesSurlignees = [];     // meshes actuellement teintes (pour les nettoyer)
+var selection         = [];   // pieces actuellement choisies via A+gachette
+var piecesSurlignees   = [];  // meshes actuellement teintes (pour les nettoyer)
+var aPrecedent         = [false, false];
 
+function cibleActive() { return selection.length > 0; }
 function cibleCourante() {
-  return cibleType === CIBLE.MODELE ? pivot : pivotSelection;
+  return cibleActive() ? pivotSelection : pivot;
 }
 function parentLogiqueCible() {
-  return cibleType === CIBLE.MODELE ? anchor : pivot;
+  return cibleActive() ? pivot : anchor;
 }
 function objetsCiblesActuels() {
-  if (cibleType === CIBLE.MODELE) return racineModele ? [racineModele] : [];
-  return selection.slice();
+  if (cibleActive()) return selection.slice();
+  return racineModele ? [racineModele] : [];
 }
 
 function surlignerSelection() {
@@ -309,6 +319,25 @@ function surlignerSelection() {
       var mats = Array.isArray(o.material) ? o.material : [o.material];
       mats.forEach(function (mat) { if (mat.emissive) mat.emissive.setHex(0x554400); });
       piecesSurlignees.push(o);
+    });
+  });
+}
+
+function restaurerOpaciteDe(pieces_) {
+  pieces_.forEach(function (piece) {
+    piece.traverse(function (o) {
+      if (!o.isMesh) return;
+      var mats = Array.isArray(o.material) ? o.material : [o.material];
+      mats.forEach(function (m) { m.opacity = 1; });
+    });
+  });
+}
+function appliquerTransparenceSelection(opacite) {
+  selection.forEach(function (piece) {
+    piece.traverse(function (o) {
+      if (!o.isMesh) return;
+      var mats = Array.isArray(o.material) ? o.material : [o.material];
+      mats.forEach(function (m) { m.transparent = true; m.opacity = opacite; });
     });
   });
 }
@@ -342,17 +371,17 @@ function reconstruireCible() {
   capturerOrigine(pivotSelection);
 }
 
-function definirCibleType(t) {
-  if (t === cibleType) {
-    if (t !== CIBLE.MODELE) enChoixCible = !enChoixCible;
-  } else {
-    cibleType = t;
-    selection = [];
-    relacherSelection();
-    surlignerSelection();
-    enChoixCible = (t !== CIBLE.MODELE);
-    dragEtat = null;
-  }
+// Appele quand on relache le bouton A : on abandonne toute la selection.
+function desactiverSelectionAB() {
+  if (!selection.length) return;
+  // Si la selection est en train d'etre saisie (grip), on la relache proprement
+  // (et on enregistre le deplacement pour Annuler) AVANT de la detruire.
+  if (grabIdx !== -1) terminerGrab();
+  restaurerOpaciteDe(selection);
+  selection = [];
+  surlignerSelection();
+  relacherSelection();
+  dragEtat = null;
   majPanneau();
 }
 
@@ -364,17 +393,16 @@ function trouverPieceRacine(mesh) {
   }
   return null;
 }
+// Un clic gachette PENDANT que A est tenu (sur la meme manette) (de)selectionne
+// la piece visee - qu'il n'y en ait qu'une ou plusieurs, meme mecanisme.
 function gererClicSelection(ray) {
   var hits = ray.intersectObjects(pieces, false);
   if (!hits.length) return;
   var piece = trouverPieceRacine(hits[0].object);
   if (!piece) return;
-  if (cibleType === CIBLE.PIECE) {
-    selection = [piece];
-  } else {
-    var i = selection.indexOf(piece);
-    if (i >= 0) selection.splice(i, 1); else selection.push(piece);
-  }
+  var i = selection.indexOf(piece);
+  if (i >= 0) { restaurerOpaciteDe([piece]); selection.splice(i, 1); }
+  else { selection.push(piece); }
   surlignerSelection();
   reconstruireCible();
   majPanneau();
@@ -507,13 +535,27 @@ function demarrerZoom() {
   spriteEchelle.visible = true;
   dessinerEchelleSprite();
 }
+// "Aimante" l'echelle sur des paliers ronds (% de la taille reelle) des que
+// l'on s'en approche, pour pouvoir retomber pile sur 100% par exemple.
+var SNAP_ECHELLE = [50, 75, 100, 125, 150, 200];
+var SNAP_TOLERANCE = 4; // points de pourcentage
+function magnetiserEchelle(scaleBrut) {
+  var pct = scaleBrut * echelleInitiale * 100;
+  for (var i = 0; i < SNAP_ECHELLE.length; i++) {
+    if (Math.abs(pct - SNAP_ECHELLE[i]) < SNAP_TOLERANCE) {
+      return (SNAP_ECHELLE[i] / 100) / echelleInitiale;
+    }
+  }
+  return scaleBrut;
+}
+
 function majZoom() {
   var p0 = new THREE.Vector3(); controllers[0].getWorldPosition(p0);
   var p1 = new THREE.Vector3(); controllers[1].getWorldPosition(p1);
   if (zoomDistDepart >= 1e-4) {
     var facteur = p0.distanceTo(p1) / zoomDistDepart;
     var nouvelle = Math.max(ECHELLE_MIN, Math.min(ECHELLE_MAX, zoomEchelleDepart * facteur));
-    pivot.scale.setScalar(nouvelle);
+    pivot.scale.setScalar(magnetiserEchelle(nouvelle));
   }
   spriteEchelle.position.copy(p0).add(p1).multiplyScalar(0.5);
   dessinerEchelleSprite();
@@ -570,23 +612,47 @@ function perpendiculaire(axe) {
   return new THREE.Vector3().crossVectors(axe, aide).normalize();
 }
 
-// Petit marqueur "0" (sprite = toujours face a la camera), texture partagee
-var zc = document.createElement('canvas');
-zc.width = 64; zc.height = 64;
-var zctx = zc.getContext('2d');
-zctx.fillStyle = 'rgba(30,30,30,0.9)';
-zctx.beginPath(); zctx.arc(32, 32, 29, 0, Math.PI * 2); zctx.fill();
-zctx.strokeStyle = '#fff'; zctx.lineWidth = 3; zctx.stroke();
-zctx.fillStyle = '#fff'; zctx.font = 'bold 30px sans-serif';
-zctx.textAlign = 'center'; zctx.textBaseline = 'middle';
-zctx.fillText('0', 32, 34);
-var texZero = new THREE.CanvasTexture(zc);
-var matZero = new THREE.SpriteMaterial({ map: texZero, depthTest: false, transparent: true });
-function creerMarqueurZero() {
-  var s = new THREE.Sprite(matZero);
-  s.scale.set(0.035, 0.035, 0.035);
+// Marqueur d'axe (sprite = toujours face a la camera) : affiche "0" au repos
+// (bouton de reinitialisation), ou la valeur EN DIRECT (m / degres) pendant
+// qu'on fait glisser CET axe - chacun a son propre canvas puisqu'ils
+// n'affichent pas tous la meme chose en meme temps.
+function creerMarqueurAxe() {
+  var c = document.createElement('canvas');
+  c.width = 96; c.height = 96;
+  var cx = c.getContext('2d');
+  var tex = new THREE.CanvasTexture(c);
+  var s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+  s.scale.set(0.04, 0.04, 0.04);
   s.renderOrder = 999;
+  s.userData.canvas = c; s.userData.ctx = cx; s.userData.tex = tex;
+  dessinerMarqueurAxe(s, '0', false);
   return s;
+}
+function dessinerMarqueurAxe(s, texte, actif) {
+  var c = s.userData.canvas, cx = s.userData.ctx;
+  cx.clearRect(0, 0, 96, 96);
+  cx.beginPath(); cx.arc(48, 48, actif ? 46 : 43, 0, Math.PI * 2);
+  cx.fillStyle = actif ? 'rgba(70,55,10,0.94)' : 'rgba(30,30,30,0.9)'; cx.fill();
+  cx.strokeStyle = actif ? '#ffee00' : '#fff'; cx.lineWidth = actif ? 4 : 3; cx.stroke();
+  cx.fillStyle = actif ? '#ffee00' : '#fff';
+  cx.textAlign = 'center'; cx.textBaseline = 'middle';
+  cx.font = actif ? 'bold 18px sans-serif' : 'bold 34px sans-serif';
+  cx.fillText(texte, 48, 48);
+  s.userData.tex.needsUpdate = true;
+}
+function texteAxeTranslation(lettre) {
+  var c = cibleCourante();
+  if (!c || !c.userData.origine) return '0';
+  var v = c.position[lettre] - c.userData.origine.pos[lettre];
+  return (v >= 0 ? '+' : '') + v.toFixed(3) + 'm';
+}
+function texteAxeRotation(lettre) {
+  var c = cibleCourante();
+  if (!c || !c.userData.origine) return '0';
+  var eActuel  = new THREE.Euler().setFromQuaternion(c.quaternion, 'XYZ');
+  var eOrigine = new THREE.Euler().setFromQuaternion(c.userData.origine.quat, 'XYZ');
+  var deg = (eActuel[lettre] - eOrigine[lettre]) * 180 / Math.PI;
+  return (deg >= 0 ? '+' : '') + deg.toFixed(1) + '°';
 }
 
 // gizmoTranslate/gizmoRotate sont enfants de anchor (pas de pivot) : ils sont
@@ -609,9 +675,9 @@ AXES.forEach(function (a) {
   halo.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), a.dir);
   halo.position.copy(a.dir).multiplyScalar(LONGUEUR_FLECHE / 2);
   gizmoTranslate.add(fleche, halo);
-  poignees.push({ mesh: halo, axe: a.dir.clone(), type: 'translate' });
+  poignees.push({ mesh: halo, axe: a.dir.clone(), type: 'translate', axeLettre: a.nom });
 
-  var zeroT = creerMarqueurZero();
+  var zeroT = creerMarqueurAxe();
   zeroT.position.copy(a.dir).multiplyScalar(-0.045);
   gizmoTranslate.add(zeroT);
   poignees.push({ mesh: zeroT, axe: a.dir.clone(), type: 'zero-t', axeLettre: a.nom });
@@ -628,9 +694,9 @@ AXES.forEach(function (a) {
   anneau.quaternion.copy(qAnneau);
   haloAnneau.quaternion.copy(qAnneau);
   gizmoRotate.add(anneau, haloAnneau);
-  poignees.push({ mesh: haloAnneau, axe: a.dir.clone(), type: 'rotate' });
+  poignees.push({ mesh: haloAnneau, axe: a.dir.clone(), type: 'rotate', axeLettre: a.nom });
 
-  var zeroR = creerMarqueurZero();
+  var zeroR = creerMarqueurAxe();
   zeroR.position.copy(perpendiculaire(a.dir)).multiplyScalar(RAYON_ANNEAU);
   gizmoRotate.add(zeroR);
   poignees.push({ mesh: zeroR, axe: a.dir.clone(), type: 'zero-r', axeLettre: a.nom });
@@ -665,7 +731,7 @@ function demarrerDragTranslate(idx, poignee) {
   var posPivot = new THREE.Vector3();
   c.getWorldPosition(posPivot);
   dragEtat = {
-    idx: idx, poignee: poignee, mode: 'translate',
+    idx: idx, poignee: poignee, mode: 'translate', axeLettre: poignee.axeLettre,
     posDepartControleur: p, posDepartPivot: posPivot,
     objets: objetsCiblesActuels(), avant: capturerMatricesMonde(objetsCiblesActuels())
   };
@@ -699,7 +765,7 @@ function demarrerDragRotate(idx, poignee) {
   var qPivot = new THREE.Quaternion();
   c.getWorldQuaternion(qPivot);
   dragEtat = {
-    idx: idx, poignee: poignee, mode: 'rotate',
+    idx: idx, poignee: poignee, mode: 'rotate', axeLettre: poignee.axeLettre,
     axeMonde: axeMonde, pivotPos: pivotPos,
     vDepart: projeteSurPlan(pC.clone().sub(pivotPos), axeMonde).normalize(),
     quatDepartPivot: qPivot,
@@ -788,42 +854,38 @@ function reinitialiserCouleurs() {
 //  Les zones sont declarees UNE SEULE FOIS et servent a la fois au dessin et
 //  a la detection du clic : impossible qu'elles se desynchronisent.
 // ============================================================================
-var PW = 512, PH = 410;
+var PW = 512, PH = 320;
 var PLANE_W = 0.46, PLANE_H = PLANE_W * PH / PW;
 
-// Note : le ciblage d'UNE piece se fait desormais par B+grip (voir plus bas),
-// plus par bouton de panneau - seuls MODELE ENTIER et GROUPE restent ici.
-var ZA = {
-  modele:  { x: 8,   y: 8,  w: 246, h: 32 },
-  groupe:  { x: 262, y: 8,  w: 242, h: 32 },
-  choisir: { x: 8,   y: 44, w: 496, h: 26 }
-};
+// Le ciblage (modele entier / piece / groupe) se fait desormais par
+// A+gachette (choisir) et A+grip (deplacer) - plus de bouton de panneau pour
+// ca, cf le bloc CIBLE DE MANIPULATION plus haut.
 var ZT = {
-  tabLibre:     { x: 8,   y: 78, w: 160, h: 30 },
-  tabPrecision: { x: 176, y: 78, w: 160, h: 30 },
-  tabCouleur:   { x: 344, y: 78, w: 160, h: 30 }
+  tabLibre:     { x: 8,   y: 8, w: 160, h: 32 },
+  tabPrecision: { x: 176, y: 8, w: 160, h: 32 },
+  tabCouleur:   { x: 344, y: 8, w: 160, h: 32 }
 };
 var ZP = {
-  translater: { x: 8,   y: 116, w: 246, h: 42 },
-  tourner:    { x: 262, y: 116, w: 242, h: 42 },
-  reset0Pos:  { x: 8,   y: 162, w: 246, h: 34 },
-  reset0Rot:  { x: 262, y: 162, w: 242, h: 34 },
-  resetTout:  { x: 8,   y: 200, w: 496, h: 32 }
+  translater: { x: 8,   y: 48,  w: 246, h: 44 },
+  tourner:    { x: 262, y: 48,  w: 242, h: 44 },
+  reset0Pos:  { x: 8,   y: 96,  w: 246, h: 34 },
+  reset0Rot:  { x: 262, y: 96,  w: 242, h: 34 },
+  resetTout:  { x: 8,   y: 134, w: 496, h: 32 }
 };
 var ZC = {
-  auto:  { x: 8,   y: 202, w: 246, h: 38 },
-  reset: { x: 262, y: 202, w: 242, h: 38 }
+  auto:  { x: 8,   y: 132, w: 246, h: 38 },
+  reset: { x: 262, y: 132, w: 242, h: 38 }
 };
 var ZU = {
-  annuler: { x: 8,   y: 284, w: 246, h: 40 },
-  refaire: { x: 262, y: 284, w: 242, h: 40 }
+  annuler: { x: 8,   y: 196, w: 246, h: 40 },
+  refaire: { x: 262, y: 196, w: 242, h: 40 }
 };
 var ZB = {
-  replacer: { x: 8,   y: 330, w: 246, h: 44 },
-  quitter:  { x: 262, y: 330, w: 242, h: 44 }
+  replacer: { x: 8,   y: 242, w: 246, h: 44 },
+  quitter:  { x: 262, y: 242, w: 242, h: 44 }
 };
 function zoneCouleur(i) {
-  return { x: 8 + (i % 6) * 84, y: 116 + (i < 6 ? 0 : 42), w: 76, h: 38 };
+  return { x: 8 + (i % 6) * 84, y: 48 + (i < 6 ? 0 : 42), w: 76, h: 38 };
 }
 
 var pc  = document.createElement('canvas');
@@ -851,22 +913,8 @@ function dessinerPanneau() {
   ctx.clearRect(0, 0, PW, PH);
   ctx.fillStyle = 'rgba(20,20,20,0.94)'; rr(ctx, 0, 0, PW, PH, 18); ctx.fill();
 
-  // --- Cible ---
-  ctx.font = 'bold 14px sans-serif';
-  bouton(ZA.modele, cibleType !== CIBLE.GROUPE ? '#2c5aa0' : '#242430', 'MODELE / PIECE', cibleType !== CIBLE.GROUPE);
-  bouton(ZA.groupe, cibleType === CIBLE.GROUPE ? '#2c5aa0' : '#242430', 'GROUPE',         cibleType === CIBLE.GROUPE);
-
-  ctx.textAlign = 'center';
-  if (cibleType === CIBLE.GROUPE) {
-    ctx.font = 'bold 14px sans-serif';
-    bouton(ZA.choisir, enChoixCible ? '#8e2b2b' : '#2c5aa0', enChoixCible ? 'TERMINER LA SELECTION' : 'CHOISIR...', enChoixCible);
-  } else {
-    ctx.fillStyle = '#666'; ctx.font = '12px sans-serif';
-    var txtCible = cibleType === CIBLE.PIECE ? 'Piece selectionnee (B+grip pour en choisir une autre)' : 'A+grip = modele entier   -   B+grip = une piece';
-    ctx.fillText(txtCible, PW / 2, 62);
-  }
-
   // --- Onglets de manipulation ---
+  ctx.textAlign = 'center';
   var enPrecision = (mode === MODE.GIZMO_T || mode === MODE.GIZMO_R);
   ctx.font = 'bold 14px sans-serif';
   bouton(ZT.tabLibre,     mode === MODE.LIBRE ? '#2c5aa0' : '#242430', 'MAIN LIBRE', mode === MODE.LIBRE);
@@ -875,8 +923,15 @@ function dessinerPanneau() {
 
   if (mode === MODE.LIBRE) {
     ctx.fillStyle = '#aaa'; ctx.font = '13px sans-serif';
-    ctx.fillText('Grip pour attraper la cible actuelle', PW / 2, 150);
-    ctx.fillText('2 grips en meme temps = zoom', PW / 2, 172);
+    ctx.fillText('Grip seul = tout le modele', PW / 2, 58);
+    ctx.fillText('A + gachette (sur une piece) = choisir 1 ou plusieurs pieces', PW / 2, 78);
+    ctx.fillText('A + grip = deplacer la selection - relacher A = deselectionne', PW / 2, 98);
+    ctx.fillText('Joystick (A tenu) = transparence de la selection', PW / 2, 118);
+    ctx.fillText('2 grips en meme temps = zoom', PW / 2, 138);
+    if (cibleActive()) {
+      ctx.fillStyle = '#ffee00';
+      ctx.fillText(selection.length + ' piece(s) selectionnee(s)', PW / 2, 160);
+    }
   } else if (enPrecision) {
     ctx.font = 'bold 15px sans-serif';
     bouton(ZP.translater, mode === MODE.GIZMO_T ? '#2c5aa0' : '#333', 'TRANSLATER', mode === MODE.GIZMO_T);
@@ -911,8 +966,7 @@ function dessinerPanneau() {
   bouton(ZB.quitter,  '#8e2b2b', 'QUITTER', false);
 
   ctx.fillStyle = '#666'; ctx.font = '11px sans-serif';
-  var infoCible = cibleType === CIBLE.MODELE ? '' : (' - ' + selection.length + ' piece(s) selectionnee(s)');
-  ctx.fillText(nomModeleCourant + infoCible, PW / 2, PH - 10);
+  ctx.fillText(nomModeleCourant, PW / 2, PH - 10);
 
   tex.needsUpdate = true;
 }
@@ -921,10 +975,6 @@ function zoneTouchee(uv) {
   var cx = uv.x * PW;
   var cy = (1 - uv.y) * PH;
   function dans(z) { return cx >= z.x && cx <= z.x + z.w && cy >= z.y && cy <= z.y + z.h; }
-
-  if (dans(ZA.modele)) return 'cible-modele';
-  if (dans(ZA.groupe)) return 'cible-groupe';
-  if (cibleType === CIBLE.GROUPE && dans(ZA.choisir)) return 'choisir';
 
   if (dans(ZT.tabLibre))     return 'tabLibre';
   if (dans(ZT.tabPrecision)) return 'tabPrecision';
@@ -951,9 +1001,6 @@ function zoneTouchee(uv) {
 
 function traiterClicPanneau(zone) {
   if (!zone) return;
-  if (zone === 'cible-modele') { definirCibleType(CIBLE.MODELE); return; }
-  if (zone === 'cible-groupe') { definirCibleType(CIBLE.GROUPE); return; }
-  if (zone === 'choisir')      { enChoixCible = !enChoixCible; majPanneau(); return; }
   if (zone === 'tabLibre')     { definirMode(MODE.LIBRE); return; }
   if (zone === 'tabPrecision') { definirMode(MODE.GIZMO_T); return; }
   if (zone === 'tabCouleur')   { definirMode(MODE.COULEUR); return; }
@@ -1031,7 +1078,9 @@ function gererSelectStart(idx, ctrl) {
     return;
   }
 
-  if (enChoixCible) { gererClicSelection(ray); return; }
+  // A tenu + gachette = (de)selectionner une piece, prioritaire sur tout le
+  // reste (gizmo, couleur...).
+  if (boutonAppuye(ctrl, 4)) { gererClicSelection(ray); return; }
 
   if (mode === MODE.GIZMO_T || mode === MODE.GIZMO_R) {
     var typeActif = (mode === MODE.GIZMO_T) ? 'translate' : 'rotate';
@@ -1061,29 +1110,30 @@ function gererSelectStart(idx, ctrl) {
   // MODE.LIBRE : rien au clic gachette, la saisie se fait au grip
 }
 
-// Recherche la piece de piecesMobiles la plus proche de posControleur (par
-// distance a sa sphere englobante), utilisee par B+grip. rayonMax = tolerance
-// de capture (pas de rayon laser ici, uniquement de la proximite, comme la
-// saisie main libre normale).
-function piecePlusProche(posControleur, rayonMax) {
-  var meilleure = null, meilleureDist = rayonMax;
-  piecesMobiles.forEach(function (p) {
-    var box = new THREE.Box3().setFromObject(p);
-    var sphere = new THREE.Sphere();
-    box.getBoundingSphere(sphere);
-    var d = Math.max(posControleur.distanceTo(sphere.center) - sphere.radius, 0);
-    if (d < meilleureDist) { meilleureDist = d; meilleure = p; }
-  });
-  return meilleure;
-}
-// Lit l'etat d'un bouton de la manette (A/X = 4, B/Y = 5 sur le mapping
+// Lit l'etat d'un bouton de la manette (A/X = bouton 4 sur le mapping
 // standard WebXR "xr-standard" des manettes Quest) - WebXR n'a pas
-// d'evenement natif pour ces boutons, il faut lire le Gamepad a la demande.
+// d'evenement natif pour ce bouton, il faut lire le Gamepad a la demande.
 function boutonAppuye(ctrl, index) {
   try {
     var gp = ctrl.userData.src && ctrl.userData.src.gamepad;
     return !!(gp && gp.buttons && gp.buttons[index] && gp.buttons[index].pressed);
   } catch (e) { return false; }
+}
+
+// Laser rouge de presentation : visible tant que la gachette est tenue,
+// s'arrete pile sur la piece visee (point rouge). Independant de l'action
+// que la gachette declenche par ailleurs (peindre, glisser le gizmo...).
+var selectTenu = [false, false];
+function majLaser(idx) {
+  var ctrl = controllers[idx];
+  var laser = ctrl.userData.laser, point = ctrl.userData.pointeurLaser;
+  if (!selectTenu[idx] || !carPret) { laser.visible = false; point.visible = false; return; }
+  var ray = rayonDe(ctrl);
+  var hits = ray.intersectObjects(pieces, false);
+  laser.visible = true;
+  laser.scale.z = hits.length ? hits[0].distance : 3;
+  point.visible = hits.length > 0;
+  if (hits.length) point.position.copy(hits[0].point);
 }
 
 controllers.forEach(function (ctrl, idx) {
@@ -1093,6 +1143,23 @@ controllers.forEach(function (ctrl, idx) {
   var ligne = new THREE.Line(geoL, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7 }));
   ligne.scale.z = 1.5;
   ctrl.add(ligne);
+
+  var geoLaser = new THREE.BufferGeometry().setFromPoints(
+    [new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1)]);
+  var laser = new THREE.Line(geoLaser, new THREE.LineBasicMaterial({ color: 0xff2222, transparent: true, opacity: 0.9, depthTest: false }));
+  laser.renderOrder = 997;
+  laser.visible = false;
+  ctrl.add(laser);
+  ctrl.userData.laser = laser;
+  var pointeurLaser = new THREE.Mesh(
+    new THREE.SphereGeometry(0.008, 12, 12),
+    new THREE.MeshBasicMaterial({ color: 0xff2222, depthTest: false })
+  );
+  pointeurLaser.renderOrder = 998;
+  pointeurLaser.visible = false;
+  scene.add(pointeurLaser);
+  ctrl.userData.pointeurLaser = pointeurLaser;
+
   ctrl.addEventListener('connected',    function (e) { ctrl.userData.src = e.data; });
   ctrl.addEventListener('disconnected', function ()  { ctrl.userData.src = null; });
 
@@ -1106,31 +1173,14 @@ controllers.forEach(function (ctrl, idx) {
     }
     if (mode !== MODE.LIBRE || grabIdx !== -1 || modeZoom) return;
 
-    var p = new THREE.Vector3();
-    ctrl.getWorldPosition(p);
-
-    // A/X (bouton 4) = cible le modele entier. B/Y (bouton 5) = cible
-    // uniquement la piece la plus proche de la manette. Grip seul (sans
-    // bouton) = reprend la cible actuelle (modele, piece ou groupe deja
-    // choisi via le panneau), pour pouvoir la re-saisir sans rappuyer.
-    if (boutonAppuye(ctrl, 4)) {
-      enChoixCible = false;
-      definirCibleType(CIBLE.MODELE);
-    } else if (boutonAppuye(ctrl, 5)) {
-      var piece = piecePlusProche(p, 0.2);
-      if (piece) {
-        enChoixCible = false;
-        cibleType = CIBLE.PIECE;
-        selection = [piece];
-        surlignerSelection();
-        reconstruireCible();
-        majPanneau();
-      }
-    }
-
     var c = cibleCourante();
     if (!c) return;
-    if (pointDeGrabProche(p)) {
+    var p = new THREE.Vector3();
+    ctrl.getWorldPosition(p);
+    // Une selection deja faite (A+gachette) est saisissable de n'importe ou -
+    // elle a ete choisie deliberement au laser. Sans selection, on saisit le
+    // modele entier, qui lui garde l'exigence de proximite (main proche).
+    if (cibleActive() || pointDeGrabProche(p)) {
       grabIdx = idx;
       grabAvant = capturerMatricesMonde(objetsCiblesActuels());
       ctrl.attach(c);
@@ -1143,8 +1193,12 @@ controllers.forEach(function (ctrl, idx) {
     terminerGrab();
   });
 
-  ctrl.addEventListener('selectstart', function () { gererSelectStart(idx, ctrl); });
+  ctrl.addEventListener('selectstart', function () {
+    selectTenu[idx] = true;
+    gererSelectStart(idx, ctrl);
+  });
   ctrl.addEventListener('selectend', function () {
+    selectTenu[idx] = false;
     if (dragEtat && dragEtat.idx === idx) {
       var apres = capturerMatricesMonde(dragEtat.objets);
       enregistrerTransformSiChange(dragEtat.objets, dragEtat.avant, apres);
@@ -1198,14 +1252,16 @@ renderer.setAnimationLoop(function (time, frame) {
 
   if (anchorPlaced) {
     preview.visible = false;
-    panneau.visible = carPret;
+    panneau.visible = carPret && !modeBureau;
   }
 
-  if (anchor.visible && panneau.parent) {
+  if (anchor.visible && panneau.parent && panneau.visible) {
     var camPos = new THREE.Vector3();
     camera.getWorldPosition(camPos);
     panneau.lookAt(camPos);
   }
+
+  if (modeBureau) majCameraBureau();
 
   if (modeZoom) majZoom();
   if (dragEtat) { if (dragEtat.mode === 'translate') majDragTranslate(); else majDragRotate(); }
@@ -1223,9 +1279,43 @@ renderer.setAnimationLoop(function (time, frame) {
     var posLocale = anchor.worldToLocal(posMonde);
     gizmoTranslate.position.copy(posLocale);
     gizmoRotate.position.copy(posLocale);
+
+    // Marqueurs d'axe : "0" au repos, valeur en direct (m ou degres) sur
+    // l'axe en cours de glissement.
+    poignees.forEach(function (pg) {
+      if (pg.type !== 'zero-t' && pg.type !== 'zero-r') return;
+      var dragActuel = dragEtat || dragBureau;    // manette (VR) ou souris (bureau)
+      var modeGlisse = dragEtat ? dragEtat.mode : (dragBureau ? dragBureau.type : null);
+      var actif = !!(dragActuel && dragActuel.axeLettre === pg.axeLettre &&
+                     ((pg.type === 'zero-t' && modeGlisse === 'translate') ||
+                      (pg.type === 'zero-r' && modeGlisse === 'rotate')));
+      var texte = actif
+        ? (pg.type === 'zero-t' ? texteAxeTranslation(pg.axeLettre) : texteAxeRotation(pg.axeLettre))
+        : '0';
+      dessinerMarqueurAxe(pg.mesh, texte, actif);
+    });
+  }
+
+  // A tenu + selection : le joystick regle la transparence des pieces
+  // choisies (l'appui deux mains simultane est reserve au zoom).
+  if (!modeBureau) {
+    controllers.forEach(function (ctrl, ci) {
+      var aActuel = boutonAppuye(ctrl, 4);
+      if (aPrecedent[ci] && !aActuel) desactiverSelectionAB();
+      aPrecedent[ci] = aActuel;
+      if (aActuel && selection.length) {
+        var gp = ctrl.userData.src && ctrl.userData.src.gamepad;
+        if (gp && gp.axes && gp.axes.length > 3) {
+          var t = gp.axes[3] || 0;
+          appliquerTransparenceSelection(Math.max(0.12, 1 - Math.abs(t) * 0.85));
+        }
+      }
+      majLaser(ci);
+    });
   }
 
   if (panneauSale) dessinerPanneau();
+  if (modeBureau) majBarreBureau();
 
   renderer.render(scene, camera);
 });
@@ -1267,25 +1357,7 @@ document.getElementById('btnCommencer').addEventListener('click', function () {
 
       session.addEventListener('end', function () {
         overlay.style.display = 'flex';
-
-        anchorPlaced    = false;
-        anchor.visible  = false;
-        reticle.visible = false;
-        preview.visible = false;
-        panneau.visible = false;
-        relacherSelection();
-        selection = [];
-        piecesSurlignees = [];
-        cibleType = CIBLE.MODELE;
-        enChoixCible = false;
-        definirMode(MODE.LIBRE);
-        grabIdx = -1; grabAvant = null;
-        modeZoom = false; gripEtat = [false, false];
-
-        if (racineModele) { pivot.remove(racineModele); racineModele = null; }
-        pieces = [];
-        piecesMobiles = [];
-        carPret = false;
+        reinitialiserApresSession();
       });
     }).catch(function (e2) {
       status.textContent = 'Erreur setSession: ' + e2.message;
@@ -1293,6 +1365,319 @@ document.getElementById('btnCommencer').addEventListener('click', function () {
   }).catch(function (e) {
     status.textContent = 'Erreur AR: ' + e.message;
   });
+});
+
+// Remise a zero commune entre la fin d'une session AR et la sortie du mode
+// bureau, pour pouvoir choisir un autre modele proprement dans les deux cas.
+function reinitialiserApresSession() {
+  anchorPlaced    = false;
+  anchor.visible  = false;
+  reticle.visible = false;
+  preview.visible = false;
+  panneau.visible = false;
+  relacherSelection();
+  selection = [];
+  piecesSurlignees = [];
+  definirMode(MODE.LIBRE);
+  grabIdx = -1; grabAvant = null;
+  modeZoom = false; gripEtat = [false, false];
+  aPrecedent = [false, false];
+  dragBureau = null;
+
+  if (racineModele) { pivot.remove(racineModele); racineModele = null; }
+  pieces = [];
+  piecesMobiles = [];
+  carPret = false;
+}
+
+// ============================================================================
+//  MODE BUREAU : meme visionneuse, a la souris, sans casque (navigateur
+//  classique). Reutilise TOUT le moteur (pivot, gizmo, coloration, Annuler/
+//  Refaire) - seules la camera (orbite souris au lieu de la tete) et les
+//  gestes d'entree (souris/clavier au lieu des manettes) sont propres au
+//  mode bureau. Le panneau 3D est remplace par la barre HTML #barreBureau.
+// ============================================================================
+var modeBureau = false;
+var dragBureau = null;
+var orbite = { cible: new THREE.Vector3(0, 0.15, 0), distance: 0.6, yaw: 0.6, tangage: 0.45 };
+var etatSourisOrbite = null;
+
+// Le canvas ne redimensionne jamais son buffer de rendu tout seul (WebXR
+// gere ca via le compositeur du casque, mais pas nous en mode bureau) :
+// sans ceci il reste a 300x150 par defaut, agrandi en CSS - image floue et
+// ratio d'aspect faux, ce qui decale aussi les clics (raycasting).
+function redimensionnerBureau() {
+  if (!modeBureau) return;
+  var w = window.innerWidth, h = window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+}
+window.addEventListener('resize', redimensionnerBureau);
+
+function majCameraBureau() {
+  var p = orbite.cible.clone();
+  var cosT = Math.cos(orbite.tangage);
+  p.x += orbite.distance * cosT * Math.sin(orbite.yaw);
+  p.y += orbite.distance * Math.sin(orbite.tangage);
+  p.z += orbite.distance * cosT * Math.cos(orbite.yaw);
+  camera.position.copy(p);
+  camera.lookAt(orbite.cible);
+}
+
+function rayonSourisDepuis(evt) {
+  var rect = canvas.getBoundingClientRect();
+  var mx = ((evt.clientX - rect.left) / rect.width) * 2 - 1;
+  var my = -((evt.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(new THREE.Vector2(mx, my), camera);
+  raycaster.far = 20;
+  raycaster.camera = camera; // meme piege que rayonDe() : obligatoire pour les Sprite (marqueurs "0")
+  return raycaster;
+}
+
+// Point de la droite (axeOrig + t*axeDir) le plus proche du rayon souris -
+// equivalent bureau du deplacement par position de manette (une souris n'a
+// pas de profondeur, donc pas le choix : on utilise cette technique
+// classique plutot que la position brute comme en VR).
+function pointProcheAxe(rayOrig, rayDir, axeOrig, axeDir) {
+  var w0 = axeOrig.clone().sub(rayOrig);
+  var a = axeDir.dot(axeDir), b = axeDir.dot(rayDir), c = rayDir.dot(rayDir);
+  var d = axeDir.dot(w0), e = rayDir.dot(w0);
+  var denom = a * c - b * b;
+  var t = Math.abs(denom) < 1e-6 ? 0 : (b * e - c * d) / denom;
+  return axeOrig.clone().add(axeDir.clone().multiplyScalar(t));
+}
+function pointSurPlan(rayOrig, rayDir, planPoint, planNormale) {
+  var denom = planNormale.dot(rayDir);
+  if (Math.abs(denom) < 1e-6) return null;
+  var t = planNormale.dot(planPoint.clone().sub(rayOrig)) / denom;
+  if (t < 0) return null;
+  return rayOrig.clone().add(rayDir.clone().multiplyScalar(t));
+}
+
+function demarrerDragTranslateSouris(poignee, rayOrig, rayDir) {
+  var c = cibleCourante(); if (!c) return;
+  var qAncre = new THREE.Quaternion(); anchor.getWorldQuaternion(qAncre);
+  var axeMonde = poignee.axe.clone().applyQuaternion(qAncre);
+  var origineMonde = c.getWorldPosition(new THREE.Vector3());
+  dragBureau = {
+    type: 'translate', axeLettre: poignee.axeLettre, axeMonde: axeMonde, posDepartPivot: origineMonde,
+    pointDepart: pointProcheAxe(rayOrig, rayDir, origineMonde, axeMonde),
+    objets: objetsCiblesActuels(), avant: capturerMatricesMonde(objetsCiblesActuels())
+  };
+}
+function demarrerDragRotateSouris(poignee, rayOrig, rayDir) {
+  var c = cibleCourante(); if (!c) return;
+  var qAncre = new THREE.Quaternion(); anchor.getWorldQuaternion(qAncre);
+  var axeMonde = poignee.axe.clone().applyQuaternion(qAncre);
+  var pivotPos = c.getWorldPosition(new THREE.Vector3());
+  var pt = pointSurPlan(rayOrig, rayDir, pivotPos, axeMonde);
+  if (!pt) return;
+  dragBureau = {
+    type: 'rotate', axeLettre: poignee.axeLettre, axeMonde: axeMonde, pivotPos: pivotPos,
+    vDepart: projeteSurPlan(pt.clone().sub(pivotPos), axeMonde).normalize(),
+    quatDepartPivot: c.getWorldQuaternion(new THREE.Quaternion()),
+    objets: objetsCiblesActuels(), avant: capturerMatricesMonde(objetsCiblesActuels())
+  };
+}
+function demarrerDragLibreSouris(pointClic) {
+  var c = cibleCourante(); if (!c) return;
+  var normale = new THREE.Vector3(); camera.getWorldDirection(normale);
+  dragBureau = {
+    type: 'libre', plan: { point: pointClic.clone(), normale: normale },
+    posDepartPivot: c.getWorldPosition(new THREE.Vector3()),
+    objets: objetsCiblesActuels(), avant: capturerMatricesMonde(objetsCiblesActuels())
+  };
+}
+function majDragBureau(rayOrig, rayDir) {
+  var c = cibleCourante(); if (!c || !dragBureau) return;
+  if (dragBureau.type === 'translate') {
+    var pt1 = pointProcheAxe(rayOrig, rayDir, dragBureau.posDepartPivot, dragBureau.axeMonde);
+    var delta1 = pt1.clone().sub(dragBureau.pointDepart);
+    c.position.copy(c.parent.worldToLocal(dragBureau.posDepartPivot.clone().add(delta1)));
+  } else if (dragBureau.type === 'rotate') {
+    var pt2 = pointSurPlan(rayOrig, rayDir, dragBureau.pivotPos, dragBureau.axeMonde);
+    if (!pt2) return;
+    var vActuel = projeteSurPlan(pt2.clone().sub(dragBureau.pivotPos), dragBureau.axeMonde).normalize();
+    var angle = angleSigneAutourAxe(dragBureau.vDepart, vActuel, dragBureau.axeMonde);
+    var qDelta = new THREE.Quaternion().setFromAxisAngle(dragBureau.axeMonde, angle);
+    var qCible = qDelta.multiply(dragBureau.quatDepartPivot);
+    var qParentInv = new THREE.Quaternion(); c.parent.getWorldQuaternion(qParentInv).invert();
+    c.quaternion.copy(qParentInv.multiply(qCible));
+  } else {
+    var pt3 = pointSurPlan(rayOrig, rayDir, dragBureau.plan.point, dragBureau.plan.normale);
+    if (!pt3) return;
+    var delta3 = pt3.clone().sub(dragBureau.plan.point);
+    c.position.copy(c.parent.worldToLocal(dragBureau.posDepartPivot.clone().add(delta3)));
+  }
+}
+function terminerDragBureau() {
+  if (!dragBureau) return;
+  var apres = capturerMatricesMonde(dragBureau.objets);
+  enregistrerTransformSiChange(dragBureau.objets, dragBureau.avant, apres);
+  dragBureau = null;
+}
+
+canvas.addEventListener('mousedown', function (evt) {
+  if (!modeBureau || !anchorPlaced) return;
+  var ray = rayonSourisDepuis(evt);
+
+  if (evt.shiftKey) {
+    gererClicSelection(ray);
+    return;
+  }
+  if (evt.ctrlKey || evt.metaKey) {
+    if (mode === MODE.GIZMO_T || mode === MODE.GIZMO_R) {
+      var typeActif = (mode === MODE.GIZMO_T) ? 'translate' : 'rotate';
+      var typeZero  = (mode === MODE.GIZMO_T) ? 'zero-t' : 'zero-r';
+      var poigneesActives = poignees.filter(function (pg) { return pg.type === typeActif || pg.type === typeZero; });
+      var hitsPoignee = ray.intersectObjects(poigneesActives.map(function (pg) { return pg.mesh; }), false);
+      if (hitsPoignee.length) {
+        var poignee = poigneesActives.filter(function (pg) { return pg.mesh === hitsPoignee[0].object; })[0];
+        if (poignee.type === 'zero-t') { resetAxeTranslation(poignee.axeLettre); return; }
+        if (poignee.type === 'zero-r') { resetAxeRotation(poignee.axeLettre); return; }
+        if (mode === MODE.GIZMO_T) demarrerDragTranslateSouris(poignee, ray.ray.origin, ray.ray.direction);
+        else demarrerDragRotateSouris(poignee, ray.ray.origin, ray.ray.direction);
+        return;
+      }
+      if (pieces.length) {
+        var hitsModele = ray.intersectObjects(pieces, false);
+        if (hitsModele.length) reposerCible(hitsModele[0].point);
+      }
+      return;
+    }
+    if (mode === MODE.COULEUR && pieces.length) {
+      var hitsC = ray.intersectObjects(pieces, false);
+      if (hitsC.length) remplirPiece(hitsC[0]);
+      return;
+    }
+    if (mode === MODE.LIBRE && cibleCourante() && pieces.length) {
+      var hitsL = ray.intersectObjects(pieces, false);
+      if (hitsL.length) demarrerDragLibreSouris(hitsL[0].point);
+    }
+    return;
+  }
+
+  etatSourisOrbite = { x: evt.clientX, y: evt.clientY };
+});
+window.addEventListener('mousemove', function (evt) {
+  if (!modeBureau) return;
+  if (dragBureau) {
+    var ray = rayonSourisDepuis(evt);
+    majDragBureau(ray.ray.origin, ray.ray.direction);
+    return;
+  }
+  if (etatSourisOrbite) {
+    var dx = evt.clientX - etatSourisOrbite.x, dy = evt.clientY - etatSourisOrbite.y;
+    orbite.yaw -= dx * 0.008;
+    orbite.tangage = Math.max(-1.4, Math.min(1.4, orbite.tangage + dy * 0.008));
+    etatSourisOrbite = { x: evt.clientX, y: evt.clientY };
+  }
+});
+window.addEventListener('mouseup', function () {
+  if (!modeBureau) return;
+  if (dragBureau) terminerDragBureau();
+  etatSourisOrbite = null;
+});
+canvas.addEventListener('wheel', function (evt) {
+  if (!modeBureau) return;
+  evt.preventDefault();
+  orbite.distance = Math.max(0.15, Math.min(3, orbite.distance * (1 + evt.deltaY * 0.001)));
+}, { passive: false });
+
+// --- Barre d'outils HTML (equivalent bureau du panneau 3D) ---
+var barreBureau  = document.getElementById('barreBureau');
+var secLibre     = document.getElementById('secLibre');
+var secPrecision = document.getElementById('secPrecision');
+var secEchelle   = document.getElementById('secEchelle');
+var secCouleur   = document.getElementById('secCouleur');
+var secCouleur2  = document.getElementById('secCouleur2');
+
+PALETTE.forEach(function (couleur, i) {
+  var sw = document.createElement('button');
+  sw.className = 'swatch';
+  sw.style.background = hex(couleur);
+  sw.title = hex(couleur);
+  sw.addEventListener('click', function () { couleurIdx = i; majBarreBureau(); });
+  sw.dataset.idx = i;
+  secCouleur.appendChild(sw);
+});
+
+document.getElementById('bTabLibre').addEventListener('click', function () { definirMode(MODE.LIBRE); });
+document.getElementById('bTabPrecision').addEventListener('click', function () { definirMode(MODE.GIZMO_T); });
+document.getElementById('bTabCouleur').addEventListener('click', function () { definirMode(MODE.COULEUR); });
+document.getElementById('bDeselectionner').addEventListener('click', function () { desactiverSelectionAB(); });
+document.getElementById('bTranslater').addEventListener('click', function () { definirMode(MODE.GIZMO_T); });
+document.getElementById('bTourner').addEventListener('click', function () { definirMode(MODE.GIZMO_R); });
+document.getElementById('b0Pos').addEventListener('click', resetPosition);
+document.getElementById('b0Rot').addEventListener('click', resetRotation);
+document.getElementById('b0Tout').addEventListener('click', resetTout);
+document.getElementById('bColorierAuto').addEventListener('click', colorierAutomatiquement);
+document.getElementById('bReinitCouleurs').addEventListener('click', reinitialiserCouleurs);
+document.getElementById('bAnnuler').addEventListener('click', annuler);
+document.getElementById('bRefaire').addEventListener('click', retablir);
+document.getElementById('bQuitterBureau').addEventListener('click', function () {
+  reinitialiserApresSession();
+  modeBureau = false;
+  barreBureau.classList.remove('visible');
+  overlay.style.display = 'flex';
+});
+Array.prototype.forEach.call(secEchelle.querySelectorAll('button[data-pct]'), function (btn) {
+  btn.addEventListener('click', function () {
+    var pct = parseFloat(btn.dataset.pct);
+    var avant = pivot.scale.x;
+    var nouvelle = (pct / 100) / echelleInitiale;
+    pivot.scale.setScalar(nouvelle);
+    if (Math.abs(nouvelle - avant) > 1e-6) enregistrer({ type: 'echelle', avant: avant, apres: nouvelle });
+    majBarreBureau();
+  });
+});
+
+function majBarreBureau() {
+  var enPrecision = (mode === MODE.GIZMO_T || mode === MODE.GIZMO_R);
+  document.getElementById('bTabLibre').className     = mode === MODE.LIBRE ? 'actif' : '';
+  document.getElementById('bTabPrecision').className = enPrecision ? 'actif' : '';
+  document.getElementById('bTabCouleur').className   = mode === MODE.COULEUR ? 'actif' : '';
+  secLibre.className     = 'ligne section' + (mode === MODE.LIBRE ? ' visible' : '');
+  secPrecision.className = 'ligne section' + (enPrecision ? ' visible' : '');
+  secEchelle.className   = 'ligne section' + (enPrecision ? ' visible' : '');
+  secCouleur.className   = 'ligne section' + (mode === MODE.COULEUR ? ' visible' : '');
+  secCouleur2.className  = 'ligne section' + (mode === MODE.COULEUR ? ' visible' : '');
+
+  document.getElementById('bTranslater').className = mode === MODE.GIZMO_T ? 'actif' : '';
+  document.getElementById('bTourner').className    = mode === MODE.GIZMO_R ? 'actif' : '';
+  document.getElementById('bEchelleTxt').textContent = Math.round(pourcentageEchelle()) + ' %';
+  document.getElementById('bAnnuler').disabled = !historique.length;
+  document.getElementById('bRefaire').disabled = !refaire.length;
+  document.getElementById('bInfoCible').textContent = cibleActive()
+    ? (selection.length + ' piece(s) selectionnee(s)') : 'Modele entier';
+
+  Array.prototype.forEach.call(secCouleur.querySelectorAll('.swatch'), function (sw) {
+    sw.classList.toggle('actif', parseInt(sw.dataset.idx, 10) === couleurIdx);
+  });
+}
+
+// --- Bouton "Voir sur cet ecran (souris)" ---
+document.getElementById('btnBureau').addEventListener('click', function () {
+  var fichier = selectModele.value;
+  if (!fichier) { status.textContent = 'Choisissez un modele'; return; }
+  nomModeleCourant = selectModele.options[selectModele.selectedIndex].textContent;
+  historique = []; refaire = [];
+
+  modeBureau = true;
+  overlay.style.display = 'none';
+  barreBureau.classList.add('visible');
+  redimensionnerBureau();
+
+  anchor.position.set(0, 0, 0);
+  anchor.quaternion.identity();
+  anchor.visible = true;
+  anchorPlaced = true;
+  reticle.visible = false;
+  preview.visible = false;
+
+  chargerModele(fichier);
+  majBarreBureau();
 });
 
 }); // fin window.addEventListener('load', ...)

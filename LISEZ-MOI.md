@@ -1,4 +1,4 @@
-# Visionneuse CAO en réalité mixte — v1.3.0
+# Visionneuse CAO en réalité mixte — v1.4.0
 
 Application WebXR pour Meta Quest 3 : pose n'importe quel modèle 3D (issu
 d'une modélisation 3DEXPERIENCE) sur une vraie table, manipule-le à main
@@ -29,15 +29,17 @@ allumer sur le PC.
 | Action | Commande |
 |---|---|
 | Poser le modèle sur la table | Vise la table, appuie sur la **gâchette** |
-| Attraper **tout le modèle** à main levée | Maintiens le bouton **A** (ou X) **+ grip** en même temps, bouge la main, relâche |
-| Attraper **une seule pièce** à main levée | Approche la manette de la pièce, maintiens le bouton **B** (ou Y) **+ grip**, bouge la main, relâche - la pièce reste sélectionnée après avoir relâché, pour la retravailler ensuite (onglet PRÉCISION par exemple) |
-| Reprendre la cible déjà choisie (sans A ni B) | **Grip** seul sur la cible actuelle (tout le modèle, la pièce ou le groupe en cours) |
-| **Zoomer** (avant/arrière, sur tout le modèle) | Maintiens le **grip des 2 manettes en même temps**, écarte ou rapproche les mains - le % d'échelle s'affiche en direct entre les 2 mains |
-| Translater / tourner précisément (onglet PRÉCISION) | Vise une flèche ou un anneau coloré avec le rayon, maintiens la **gâchette**, bouge la main, relâche |
+| Attraper **tout le modèle** à main levée | **Grip** seul (sans rien tenir d'autre), bouge la main, relâche |
+| **Choisir une ou plusieurs pièces** à déplacer indépendamment | Maintiens le bouton **A** (ou X), et pendant que tu le tiens, vise chaque pièce avec la **gâchette** pour la (dé)sélectionner (1 pièce = suffisant, plusieurs = un groupe) |
+| Déplacer la sélection | Toujours **A tenu**, appuie en plus sur le **grip** et bouge la main |
+| Régler la transparence de la sélection | Toujours **A tenu**, pousse le **joystick** (utile pour voir à travers pendant que tu choisis) |
+| Désélectionner | **Relâche le bouton A** — retour automatique à « tout le modèle » |
+| **Zoomer** (avant/arrière, sur tout le modèle) | Maintiens le **grip des 2 manettes en même temps**, écarte ou rapproche les mains - le % s'affiche en direct entre les 2 mains, et « s'aimante » sur 50/75/100/125/150/200% |
+| **Montrer/pointer quelque chose** | Maintiens la **gâchette appuyée** : un laser rouge apparaît et s'arrête sur la pièce visée |
+| Translater / tourner précisément (onglet PRÉCISION) | Vise une flèche ou un anneau coloré avec le rayon, maintiens la **gâchette**, bouge la main, relâche - la valeur (mètres/degrés) s'affiche en direct à la place du « 0 » |
 | Remettre UN axe à zéro (onglet PRÉCISION) | Vise le petit rond « 0 » à côté de la flèche/l'anneau de cet axe, **gâchette** |
 | Remettre TOUTE la position/rotation à zéro (onglet PRÉCISION) | Bouton « TOUT REMETTRE À ZÉRO » (ou « 0 POSITION » / « 0 ROTATION » séparément) |
 | Déplacer le centre de rotation (onglet PRÉCISION) | Vise un point du modèle (hors flèche/anneau), **gâchette** |
-| **Choisir un groupe de pièces** à déplacer ensemble | En haut du panneau : bouton **GROUPE**, puis « CHOISIR... », puis vise chaque pièce avec la **gâchette** (clic à nouveau = désélectionne) ; « TERMINER LA SÉLECTION » pour valider. Bouton **MODÈLE / PIÈCE** pour en sortir |
 | Colorer une pièce (onglet COULEUR) | Choisis une couleur dans la palette, puis vise la pièce et appuie sur la **gâchette** |
 | Colorer toutes les pièces automatiquement | Bouton « COLORIER AUTO » |
 | **Annuler / Refaire** | Boutons « ANNULER » / « REFAIRE » du panneau (déplacements, rotations, zoom, couleurs) |
@@ -50,6 +52,21 @@ Le placement essaie la détection réelle de surface (hit-test) ; si le
 navigateur ne la supporte pas (cas de Wolvic aujourd'hui), le modèle suit
 simplement la manette droite jusqu'au clic — sans rien à changer si un futur
 navigateur ajoute le support.
+
+## Utilisation sur ordinateur, sans casque (mode souris)
+
+Sur l'écran d'accueil, bouton **« Voir sur cet écran (souris) »** : même
+modèle, mêmes outils (main libre, précision, couleur, annuler/refaire,
+échelle), pilotés à la souris - pratique pour préparer une visite sans
+avoir le Quest sous la main.
+
+| Action | Commande souris |
+|---|---|
+| Orbiter la vue | Glisser (clic gauche) |
+| Zoomer la vue (caméra) | Molette |
+| Choisir une/des pièce(s) | **Maj + clic** sur une pièce (reclic = désélectionne) |
+| Déplacer la cible / utiliser le gizmo / peindre | **Ctrl + glisser** (sur le modèle, une flèche/anneau, ou une pièce selon l'onglet actif) |
+| Tout le reste (onglets, RAZ, palette, annuler/refaire, % d'échelle) | Barre d'outils en haut de l'écran |
 
 ## Ajouter un modèle depuis 3DEXPERIENCE
 
