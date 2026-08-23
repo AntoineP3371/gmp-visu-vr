@@ -4,50 +4,121 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Visionneuse CAO en realite mixte</title>
+  <meta name="theme-color" content="#0e7ca8">
+  <!-- Resout le theme AVANT le premier affichage (evite un flash de la
+       mauvaise couleur) - meme logique qu'Atelier GMP. -->
+  <script>(function(){try{var t=localStorage.getItem('theme');if(t!=='dark'&&t!=='light')t=matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
   <style>
-    body { margin: 0; background: #000; }
-    #overlay {
-      position: fixed; inset: 0; display: flex; flex-direction: column;
-      align-items: center; justify-content: center; text-align: center;
-      background: rgba(0,0,0,0.92); color: white; font-family: sans-serif;
-      z-index: 10; padding: 20px; box-sizing: border-box; overflow-y: auto;
+    /* ============================================================
+       Identite visuelle alignee sur Atelier GMP (portail de l'IUT) :
+       meme palette, meme fond quadrille, memes cartes arrondies,
+       meme bascule theme clair/sombre.
+       ============================================================ */
+    :root{
+      --bg:#eef3f6; --surface:#fff; --border:#d5e1e9;
+      --primary:#0e7ca8; --primary-light:#e1f1f8; --primary-dark:#08556f;
+      --text:#10222b; --muted:#5b7686;
+      --danger:#c2352c;
+      --radius:16px; --shadow:0 6px 26px rgba(0,40,60,.12);
     }
-    h1 { font-size: 22px; margin: 0 0 8px; }
-    p  { font-size: 13px; color: #aaa; margin: 0 0 16px; max-width: 420px; }
+    :root[data-theme="dark"]{
+      --bg:#0d1a21; --surface:#16262f; --border:#294551;
+      --primary:#3ba7d0; --primary-light:#12313f; --primary-dark:#8fd2ea;
+      --text:#e6eef2; --muted:#93aab7;
+      --danger:#e4675e;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); }
+    canvas { display: block; position: fixed; inset: 0; width: 100%; height: 100%; }
+
+    #overlay {
+      position: fixed; inset: 0; z-index: 10; overflow-y: auto;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 32px 18px; box-sizing: border-box; text-align: center;
+      background:
+        linear-gradient(rgba(16,34,43,.028) 1px,transparent 1px),
+        linear-gradient(90deg,rgba(16,34,43,.028) 1px,transparent 1px),
+        var(--bg);
+      background-size: 34px 34px, 34px 34px, auto;
+    }
+    :root[data-theme="dark"] #overlay{
+      background:
+        linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),
+        linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px),
+        var(--bg);
+      background-size: 34px 34px, 34px 34px, auto;
+    }
+
+    .theme-toggle{
+      position: fixed; top: 12px; right: 12px; z-index: 70;
+      width: 38px; height: 38px; border-radius: 9px;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text);
+      font-size: 1.05rem; cursor: pointer; font-family: inherit;
+      box-shadow: 0 2px 12px rgba(0,40,60,.10);
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .theme-toggle:hover{ border-color: var(--primary); }
+
+    .brand-logo{ height: 34px; width: auto; margin-bottom: 22px; filter: drop-shadow(0 2px 6px rgba(0,0,0,.1)); }
+
+    .card{
+      background: var(--surface); border: 1px solid var(--border); border-radius: 20px;
+      box-shadow: var(--shadow);
+      padding: 40px 44px; width: 100%; max-width: 420px;
+      display: flex; flex-direction: column; align-items: center; gap: 16px;
+      position: relative; overflow: hidden;
+    }
+    .card::before{ content:''; position:absolute; top:0; left:0; right:0; height:6px; background: var(--primary); }
+
+    .icon-ar{ width: 72px; height: 72px; color: var(--primary); }
+
+    .badge{
+      font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+      padding: 4px 12px; border-radius: 20px; background: var(--primary-light); color: var(--primary-dark);
+    }
+
+    h1 { font-size: 1.5rem; font-weight: 800; margin: 0; }
+    p.sous-titre { font-size: .88rem; color: var(--muted); line-height: 1.55; margin: 0; }
+
+    .separateur{ width: 100%; height: 1px; background: var(--border); margin: 6px 0; }
+
     /* Liste de modeles "maison" (boutons), pas un <select> natif : sur
        Wolvic (navigateur VR du Quest), le picker natif d'un <select> ne
        s'ouvrait pas du tout au clic/toucher - un souci connu des
        navigateurs embarques en VR avec les controles de formulaire natifs. */
-    .menu-modele { position: relative; display: inline-block; min-width: 260px; margin: 5px; text-align: left; }
+    .menu-modele { position: relative; width: 100%; text-align: left; }
     .btn-modele-choisi {
-      width: 100%; padding: 10px 14px; font-size: 15px; border-radius: 8px; border: none;
-      background: #fff; color: #111; cursor: pointer; box-sizing: border-box;
+      width: 100%; padding: 11px 16px; font-size: .9rem; border-radius: 10px; border: 1.5px solid var(--border);
+      background: var(--surface); color: var(--text); cursor: pointer; box-sizing: border-box; font-family: inherit;
       display: flex; justify-content: space-between; align-items: center; gap: 8px;
     }
-    .btn-modele-choisi::after { content: '\25BC'; font-size: 11px; color: #666; flex: none; }
+    .btn-modele-choisi:hover { border-color: var(--primary); }
+    .btn-modele-choisi::after { content: '\25BC'; font-size: 11px; color: var(--muted); flex: none; }
     .liste-modeles {
       display: none; position: absolute; top: 100%; left: 0; right: 0; z-index: 20;
-      background: #fff; border-radius: 8px; margin-top: 4px; max-height: 240px; overflow-y: auto;
-      box-shadow: 0 4px 18px rgba(0,0,0,0.5);
+      background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin-top: 4px;
+      max-height: 240px; overflow-y: auto; box-shadow: 0 8px 26px rgba(0,40,60,.18);
     }
     .liste-modeles.ouverte { display: block; }
     .liste-modeles button {
-      display: block; width: 100%; text-align: left; padding: 10px 14px; font-size: 15px;
-      border: none; background: #fff; color: #111; cursor: pointer; border-bottom: 1px solid #eee;
+      display: block; width: 100%; text-align: left; padding: 10px 14px; font-size: .9rem; font-family: inherit;
+      border: none; background: var(--surface); color: var(--text); cursor: pointer; border-bottom: 1px solid var(--border);
       box-sizing: border-box;
     }
     .liste-modeles button:last-child { border-bottom: none; }
-    .liste-modeles button:hover { background: #eef6ff; }
-    .liste-modeles button.actif { background: #2f8fd6; color: #fff; }
-    .btn { padding: 14px 30px; font-size: 17px; border: none; border-radius: 12px;
-           color: white; cursor: pointer; margin: 5px; background: #2f8fd6; }
-    .btn.secondaire { background: #444; }
-    .btn:disabled { background: #555; cursor: default; }
-    #status  { margin-top: 12px; font-size: 13px; color: #aaa; }
-    #errbox  { font-size: 11px; color: #ff6b6b; white-space: pre-wrap; max-width: 90vw; margin-top: 6px; }
-    #version { position: fixed; bottom: 8px; left: 0; right: 0; text-align: center;
-               font-size: 11px; color: #666; z-index: 11; }
-    canvas { display: block; position: fixed; inset: 0; width: 100%; height: 100%; }
+    .liste-modeles button:hover { background: var(--primary-light); }
+    .liste-modeles button.actif { background: var(--primary); color: #fff; }
+
+    .btn { width: 100%; padding: 13px 16px; font-size: .98rem; font-weight: 700; border: none;
+           border-radius: 10px; cursor: pointer; font-family: inherit; }
+    .btn.primaire { background: var(--primary); color: #fff; }
+    .btn.primaire:disabled { background: var(--border); color: var(--muted); cursor: default; }
+    .btn.secondaire { background: transparent; color: var(--muted); font-weight: 600; font-size: .86rem; padding: 11px 16px; }
+    .btn.secondaire:hover { color: var(--text); }
+
+    #status  { font-size: .8rem; color: var(--muted); }
+    #errbox  { font-size: 11px; color: var(--danger); white-space: pre-wrap; max-width: 100%; }
+    #version { margin-top: 22px; font-size: .7rem; color: var(--muted); opacity: .6; text-align: center; }
 
     /* --- Barre d'outils du mode bureau (souris) --- */
     #barreBureau {
@@ -77,20 +148,39 @@
 </head>
 <body>
   <div id="overlay">
-    <h1>Visionneuse CAO en realite mixte</h1>
-    <p>
-      Choisis un modele, pose-le sur ta table, puis manipule-le a main levee
-      ou precisement, et colore ses pieces.
-    </p>
-    <div class="menu-modele" id="menuModele">
-      <button type="button" id="boutonModeleChoisi">Chargement...</button>
-      <div class="liste-modeles" id="listeModeles"></div>
-    </div><br/>
-    <button class="btn" id="btnCommencer">Entrer en realite mixte</button>
-    <button class="btn secondaire" id="btnBureau">Voir sur cet ecran (souris)</button>
-    <div id="status">Chargement...</div>
-    <div id="errbox"></div>
-    <div id="version">v1.13.0</div>
+    <button id="themeToggle" class="theme-toggle" onclick="toggleTheme()" aria-label="Basculer le theme clair ou sombre" title="Theme clair / sombre">🌙</button>
+
+    <img class="brand-logo" src="gmp-logo.png" alt="GMP Bordeaux" onerror="this.style.display='none'">
+
+    <div class="card">
+      <svg class="icon-ar" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-label="Visionneuse en realite mixte">
+        <path d="M6 16V8h8M50 8h8v8M58 48v8h-8M14 56H6v-8"/>
+        <path d="M32 18l14 8v16l-14 8-14-8V26z"/>
+        <path d="M32 18v16M18 26l14 8 14-8"/>
+      </svg>
+
+      <span class="badge">Realite mixte</span>
+      <h1>Visionneuse CAO</h1>
+      <p class="sous-titre">
+        Choisis un modele, pose-le sur ta table, puis manipule-le a main levee
+        ou precisement, et colore ses pieces.
+      </p>
+
+      <div class="separateur"></div>
+
+      <div class="menu-modele" id="menuModele">
+        <button type="button" id="boutonModeleChoisi">Chargement...</button>
+        <div class="liste-modeles" id="listeModeles"></div>
+      </div>
+
+      <button class="btn primaire" id="btnCommencer">Entrer en realite mixte</button>
+      <button class="btn secondaire" id="btnBureau">Voir sur cet ecran (souris)</button>
+
+      <div id="status">Chargement...</div>
+      <div id="errbox"></div>
+    </div>
+
+    <div id="version">v1.14.0</div>
   </div>
   <canvas id="c"></canvas>
 
@@ -159,11 +249,33 @@
       var el = document.getElementById('errbox');
       if (el) el.textContent = 'ERR: ' + e.reason;
     });
+
+    function applyThemeIcon() {
+      var d = document.documentElement.getAttribute('data-theme') === 'dark';
+      var b = document.getElementById('themeToggle');
+      if (b) b.textContent = d ? '☀️' : '🌙';
+    }
+    function toggleTheme() {
+      var d = document.documentElement.getAttribute('data-theme') === 'dark';
+      var n = d ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', n);
+      try { localStorage.setItem('theme', n); } catch (e) {}
+      applyThemeIcon();
+    }
+    applyThemeIcon();
+    try {
+      matchMedia('(prefers-color-scheme:dark)').addEventListener('change', function (e) {
+        if (!localStorage.getItem('theme')) {
+          document.documentElement.setAttribute('data-theme', e.matches ? 'dark' : 'light');
+          applyThemeIcon();
+        }
+      });
+    } catch (e) {}
   </script>
 
   <script src="three.min.js"></script>
   <script src="GLTFLoader.js"></script>
   <script src="drive-config.js?v=1.12.1"></script>
-  <script src="app.js?v=1.13.0"></script>
+  <script src="app.js?v=1.14.0"></script>
 </body>
 </html>

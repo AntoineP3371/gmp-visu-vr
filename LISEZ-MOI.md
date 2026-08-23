@@ -1,4 +1,4 @@
-# Visionneuse CAO en réalité mixte — v1.13.0
+# Visionneuse CAO en réalité mixte — v1.14.0
 
 Application WebXR pour Meta Quest 3 : pose n'importe quel modèle 3D (issu
 d'une modélisation 3DEXPERIENCE) sur une vraie table, manipule-le à main
@@ -251,7 +251,8 @@ Le projet est hébergé sur **GitHub Pages**, adresse fixe
 
 | Fichier | Rôle |
 |---|---|
-| `index.html` | Écran d'accueil (choix du modèle, bouton d'entrée en AR) |
+| `index.html` | Écran d'accueil (choix du modèle, bouton d'entrée en AR), design repris de l'appli Atelier GMP (clair/sombre) |
+| `gmp-logo.png` | Logo affiché sur l'écran d'accueil |
 | `app.js` | Toute l'application (placement, manipulation, coloration) |
 | `modeles.json` | **Liste des modèles locaux — un fichier à modifier pour en ajouter un sans passer par Drive** |
 | `drive-config.js` | **Réglages Google Drive (clé API, dossier, URL Apps Script) — à remplir, voir plus haut** |
