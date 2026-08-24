@@ -2294,6 +2294,129 @@ function dessinerRoue() {
   rtex.needsUpdate = true;
 }
 
+// ============================================================================
+//  NOTICE D'AIDE - panneau complet ouvert en cliquant sur le logo GMP au
+//  centre du menu racine (retour utilisateur). Bien plus grand que le disque
+//  (0.27 m, trop petit pour tout ce texte) : place devant l'utilisateur au
+//  moment de l'ouverture, pas accroche a la main.
+// ============================================================================
+var NOTICE_SECTIONS = [
+  { titre: 'Deplacements', couleur: '#185fa5', lignes: [
+      'Attraper a main levee : Grip',
+      'Choisir une/des piece(s) : A + gachette sur chaque',
+      'Revenir au modele entier : bouton Libre',
+      'Deplacer precisement : viser fleche/anneau + gachette',
+      'Remettre a l\'origine : bouton RAZ rouge (un axe) ou RAZ generale (tout), ou approche = aimantation automatique',
+      'Deplacer le centre de rotation : viser un point + gachette',
+      'Zoom : 2 grips en meme temps'
+  ] },
+  { titre: 'Couleurs', couleur: '#993556', lignes: [
+      'Automatique : un clic, repartit les couleurs',
+      'Manuel : choisis une couleur puis vise la piece + gachette',
+      'RAZ couleurs : remet les couleurs d\'origine',
+      'Transparence (selection) : A tenu + joystick haut/bas',
+      'Transparence (piece visee) : gachette tenue + joystick haut/bas'
+  ] },
+  { titre: 'Mesures', couleur: '#0f6e56', lignes: [
+      'Nouvelle mesure : vise un 1er point puis un 2e + gachette',
+      'Revoir une mesure : liste, clique une entree',
+      'Effacer une mesure : croix rouge en haut a droite',
+      'La distance suit le modele si tu le deplaces'
+  ] },
+  { titre: 'Actions', couleur: '#534ab7', lignes: [
+      'Annuler : menu, ou joystick a gauche (manette du menu)',
+      'Refaire : menu, ou joystick a droite',
+      'Remettre sur la table : recommence le placement',
+      'Quitter : ferme la session'
+  ] },
+  { titre: 'Capture', couleur: '#854f0b', lignes: [
+      'Cadre : le prochain appui gachette prend la photo',
+      'Fond : Realite virtuelle (bleu) ou Realite augmentee (transparent)',
+      'Envoi automatique vers Google Drive si configure'
+  ] },
+  { titre: 'Gestes de base', couleur: '#3a4553', lignes: [
+      'Le disque suit la main gauche (clic joystick sur l\'autre main pour le deplacer)',
+      'Viser + gachette = valider',
+      'Centre du disque = RETOUR (remonte d\'un niveau)',
+      'Le laser est toujours visible, ce qu\'il vise se surligne',
+      'Reclique sur le logo (ou sur ce panneau) pour fermer cette notice'
+  ] }
+];
+var NCV_L = 1400, NCV_H = 900;
+var nc = document.createElement('canvas'); nc.width = NCV_L; nc.height = NCV_H;
+var nctx = nc.getContext('2d');
+var ntex = new THREE.CanvasTexture(nc);
+var noticeAideMesh = null;
+
+function envelopperTexteNotice(texte, largeurMax) {
+  var mots = texte.split(' '), lignes = [], ligne = '';
+  mots.forEach(function (mot) {
+    var essai = ligne ? ligne + ' ' + mot : mot;
+    if (ligne && nctx.measureText(essai).width > largeurMax) { lignes.push(ligne); ligne = mot; }
+    else { ligne = essai; }
+  });
+  if (ligne) lignes.push(ligne);
+  return lignes;
+}
+function dessinerCelluleNotice(x, y, w, h, section) {
+  nctx.fillStyle = section.couleur; nctx.beginPath();
+  nctx.roundRect ? nctx.roundRect(x, y, w, h, 10) : nctx.rect(x, y, w, h);
+  nctx.fill();
+  nctx.fillStyle = '#fff'; nctx.textAlign = 'left'; nctx.font = 'bold 21px sans-serif';
+  nctx.fillText(section.titre, x + 16, y + 30);
+  nctx.font = '15px sans-serif';
+  var yLigne = y + 60, largeurTexte = w - 32, hauteurLigne = 20;
+  section.lignes.forEach(function (l) {
+    envelopperTexteNotice(l, largeurTexte).forEach(function (sousLigne) {
+      nctx.fillText(sousLigne, x + 16, yLigne);
+      yLigne += hauteurLigne;
+    });
+    yLigne += 6;
+  });
+}
+function dessinerNoticeAide() {
+  nctx.clearRect(0, 0, NCV_L, NCV_H);
+  nctx.fillStyle = 'rgba(16,20,26,0.97)'; nctx.fillRect(0, 0, NCV_L, NCV_H);
+  nctx.strokeStyle = '#2f8fd6'; nctx.lineWidth = 4; nctx.strokeRect(2, 2, NCV_L - 4, NCV_H - 4);
+  nctx.fillStyle = '#fff'; nctx.textAlign = 'left'; nctx.font = 'bold 30px sans-serif';
+  nctx.fillText('Aide - toutes les fonctions', 24, 48);
+  nctx.fillStyle = '#9aa5ad'; nctx.font = '16px sans-serif';
+  nctx.fillText('Vise le logo ou ce panneau et appuie sur la gachette pour fermer', 24, 76);
+
+  var marge = 20, gap = 16, cols = 3, rows = 2, hautDebut = 96;
+  var cellW = (NCV_L - marge * 2 - (cols - 1) * gap) / cols;
+  var cellH = (NCV_H - hautDebut - marge - (rows - 1) * gap) / rows;
+  NOTICE_SECTIONS.forEach(function (section, i) {
+    var col = i % cols, ligneIdx = Math.floor(i / cols);
+    var x = marge + col * (cellW + gap), y = hautDebut + ligneIdx * (cellH + gap);
+    dessinerCelluleNotice(x, y, cellW, cellH, section);
+  });
+
+  ntex.needsUpdate = true;
+}
+function ouvrirNoticeAide() {
+  if (noticeAideMesh) { fermerNoticeAide(); return; }
+  dessinerNoticeAide();
+  var largeur = 0.9, hauteur = largeur * (NCV_H / NCV_L);
+  noticeAideMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(largeur, hauteur),
+    new THREE.MeshBasicMaterial({ map: ntex, transparent: true, depthTest: false, side: THREE.DoubleSide })
+  );
+  noticeAideMesh.renderOrder = 1600;
+  var pos = new THREE.Vector3(), dir = new THREE.Vector3();
+  camera.getWorldPosition(pos);
+  camera.getWorldDirection(dir);
+  noticeAideMesh.position.copy(pos).add(dir.multiplyScalar(0.9));
+  noticeAideMesh.quaternion.copy(camera.getWorldQuaternion(new THREE.Quaternion()));
+  scene.add(noticeAideMesh);
+}
+function fermerNoticeAide() {
+  if (!noticeAideMesh) return;
+  scene.remove(noticeAideMesh);
+  noticeAideMesh.material.dispose();
+  noticeAideMesh = null;
+}
+
 function zoneRoue(uv) {
   var c = RCV / 2, cx = uv.x * RCV, cy = (1 - uv.y) * RCV;
   if (Math.hypot(cx - c, cy - c) < RHUB) return 'back';
@@ -2311,6 +2434,10 @@ function zoneRoue(uv) {
 function traiterClicRoue(zone) {
   if (!zone) return;
   if (zone === 'back') {
+    // Au niveau racine, "back" ne remonte nulle part (rien a depiler) - ce
+    // clic "mort" ouvre desormais la notice d'aide (retour utilisateur : le
+    // logo GMP au centre du menu racine doit ouvrir une notice complete).
+    if (!roueStack.length) { ouvrirNoticeAide(); return; }
     var noeudQuitte = roueStack[roueStack.length - 1];
     roueStack.pop();
     // Quitter le sous-menu Mesures desarme le mode mesure ET cache la
@@ -2366,6 +2493,11 @@ function gererSelectStart(idx, ctrl) {
   if (previewPhoto) {
     var hitsApercu = ray.intersectObject(previewPhoto, false);
     if (hitsApercu.length) { fermerApercuPhoto(); return; }
+  }
+
+  if (noticeAideMesh) {
+    var hitsNotice = ray.intersectObject(noticeAideMesh, false);
+    if (hitsNotice.length) { fermerNoticeAide(); return; }
   }
 
   if (mesureCroix) {
