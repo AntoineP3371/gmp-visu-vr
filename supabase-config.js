@@ -10,7 +10,7 @@
 //  rien de nouveau a creer. Seul "canal" est propre a cette appli.
 // ============================================================================
 window.SUPABASE_CONFIG = {
-  url: 'COLLE_URL_SUPABASE',
-  anonKey: 'COLLE_CLE_ANON',
+  url: 'https://ggmlfbxppgeivfvlxxrj.supabase.co',
+  anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdnbWxmYnhwcGdlaXZmdmx4eHJqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIzNDY5NTIsImV4cCI6MjA5NzkyMjk1Mn0.HvPE2ewB8gFgVzj-xAb1YBxFfn8hTEwOwQLDfF1vgT0',
   canal: 'visu-cao-live'
 };
