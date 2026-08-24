@@ -326,9 +326,14 @@ pas besoin de créer un nouveau compte :
   d'émettre) - pas de galerie multi-casques comme sur VR CEC.
 - Le spectateur a sa **propre caméra libre** (glisser = orbiter, molette =
   zoom, **clic molette maintenu = translater la vue**), ce n'est PAS la vue
-  à travers les yeux du casque - à la place, un petit **avatar en forme de
-  casque** (avec une flèche jaune indiquant le regard) montre où se trouve
-  et où regarde l'utilisateur casque/téléphone.
+  à travers les yeux du casque - à la place, un **avatar Meta Quest 3 en 3D**
+  (avec une flèche jaune indiquant le regard) montre où se trouve et où
+  regarde l'utilisateur casque/téléphone.
+
+**Crédit** : le modèle 3D de l'avatar (`Quest3.glb`) est
+*« Meta Quest 3 »* par [Elin](https://sketchfab.com/ElinHohler) sur
+Sketchfab, sous licence
+[Creative Commons Attribution](http://creativecommons.org/licenses/by/4.0/).
 
 ## Publier une mise à jour en ligne (GitHub Pages)
 
@@ -354,6 +359,7 @@ Le projet est hébergé sur **GitHub Pages**, adresse fixe
 | `spectateur.html` | Écran spectateur (voir en direct sur un PC) - voir plus haut |
 | `supabase-config.js` | **Réglages de l'écran spectateur (URL + clé Supabase) — à remplir, voir plus haut** |
 | `supabase.min.js` | Bibliothèque de diffusion temps réel (vendored, ne pas modifier) |
+| `Quest3.glb` | Modèle 3D de l'avatar affiché dans l'écran spectateur (CC-BY, voir crédit plus haut) |
 | `exemple-cric.glb` | Modèle de démonstration fourni avec le projet |
 | `three.min.js` / `GLTFLoader.js` | Bibliothèque 3D (vendored, ne pas modifier) |
 | `server.js` / `serveur.bat` | Serveur local + tunnel HTTPS (pour tester avec le casque) |

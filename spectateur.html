@@ -267,26 +267,25 @@
   function eteindreLaser() { laserLigne.visible = false; laserPoint.visible = false; }
 
   // ============================ AVATAR (tete du casque/telephone) ============================
-  // Petit casque stylise (construit avec des primitives, pas de fichier a
-  // charger) : un boitier + une visiere sombre + une fleche jaune qui pointe
-  // dans la direction du regard, pour qu'on comprenne l'orientation d'un
-  // coup d'oeil.
+  // Vrai modele 3D d'un Meta Quest 3 (Quest3.glb, CC-BY par Elin sur
+  // Sketchfab - credit dans LISEZ-MOI.md), charge une seule fois. La fleche
+  // jaune (deja utilisee en v1.17.0) reste affichee tout le temps - elle
+  // sert d'indicateur de direction fiable pendant le chargement du modele
+  // (8+ Mo, peut prendre un instant) et ne genait pas une fois le casque
+  // charge (petite, discrete, devant les lentilles).
+  // Calage determine visuellement (vue du dessus, comparaison avec la
+  // fleche de reference) : le modele Quest3.glb a sa visiere/coussin facial
+  // du cote OPPOSE a son axe -Z par defaut - on le retourne de 180 deg pour
+  // que "l'avant" du casque corresponde a la convention de regard de
+  // l'appli (-Z local, meme sens que le laser des manettes).
+  var ROTATION_CALAGE_CASQUE = Math.PI;
   function creerAvatarTete() {
     var g = new THREE.Group();
-    var corps = new THREE.Mesh(
-      new THREE.BoxGeometry(0.15, 0.075, 0.09),
-      new THREE.MeshStandardMaterial({ color: 0x2f8fd6, roughness: 0.5 }));
-    g.add(corps);
-    var visiere = new THREE.Mesh(
-      new THREE.BoxGeometry(0.12, 0.045, 0.02),
-      new THREE.MeshStandardMaterial({ color: 0x10222b, roughness: 0.3 }));
-    visiere.position.set(0, 0, -0.055);
-    g.add(visiere);
     var fleche = new THREE.Mesh(
-      new THREE.ConeGeometry(0.02, 0.05, 10),
+      new THREE.ConeGeometry(0.018, 0.045, 10),
       new THREE.MeshBasicMaterial({ color: 0xffcc00 }));
     fleche.rotation.x = -Math.PI / 2;
-    fleche.position.set(0, 0, -0.095);
+    fleche.position.set(0, 0, -0.13);
     g.add(fleche);
     g.visible = false;
     return g;
@@ -294,6 +293,20 @@
   var avatarTete = creerAvatarTete();
   groupeAncre.add(avatarTete);
   var _qTete = new THREE.Quaternion();
+
+  new THREE.GLTFLoader().load('Quest3.glb', function (gltf) {
+    var m = gltf.scene;
+    var box = new THREE.Box3().setFromObject(m);
+    var taille = new THREE.Vector3(); box.getSize(taille);
+    var facteur = 0.20 / Math.max(taille.x, taille.y, taille.z);
+    m.scale.setScalar(facteur);
+    m.updateMatrixWorld(true);
+    var box2 = new THREE.Box3().setFromObject(m);
+    var centre = new THREE.Vector3(); box2.getCenter(centre);
+    m.position.sub(centre);
+    m.rotation.y = ROTATION_CALAGE_CASQUE;
+    avatarTete.add(m);
+  }, undefined, function () { /* ignore silencieusement : la fleche seule reste visible */ });
 
   function appliquerTete(o, q) {
     if (!o || !q) return;
