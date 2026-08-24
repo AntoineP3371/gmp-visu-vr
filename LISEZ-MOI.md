@@ -1,4 +1,4 @@
-# Visionneuse CAO en réalité mixte — v1.14.0
+# Visionneuse CAO en réalité mixte — v1.15.0
 
 Application WebXR pour Meta Quest 3 : pose n'importe quel modèle 3D (issu
 d'une modélisation 3DEXPERIENCE) sur une vraie table, manipule-le à main
@@ -109,6 +109,41 @@ sans avoir le Quest sous la main.
 | Choisir une/des pièce(s) | **Maj + clic** sur une pièce (reclic = désélectionne) |
 | Déplacer la cible / utiliser le gizmo / peindre / mesurer | **Ctrl + glisser** ou **Ctrl + clic** (selon l'onglet actif) |
 | Tout le reste (onglets MAIN LIBRE/PRÉCISION/COULEUR/MESURES/CAPTURE, RAZ, RAZ GÉNÉRALE, palette, annuler/refaire, % d'échelle, fond de capture) | Barre d'outils en haut de l'écran |
+
+## Utilisation sur téléphone (réalité augmentée, Android uniquement)
+
+Sur l'écran d'accueil, bouton **« Réalité augmentée sur téléphone »** : filme
+l'environnement réel avec la caméra du téléphone, pose le modèle sur une
+vraie surface (table, établi...) en tapant l'écran, puis tourne autour en te
+déplaçant physiquement avec le téléphone - mêmes outils que le casque/la
+souris, pilotés au doigt via la même barre d'outils que le mode souris,
+affichée par-dessus l'image de la caméra.
+
+> ⚠️ **Android uniquement.** L'iPhone (Safari) n'a pas la technologie
+> nécessaire (WebXR) - Apple ne l'a pas implémentée, et comme tous les
+> navigateurs sur iPhone doivent utiliser le même moteur que Safari (règle
+> imposée par Apple), aucune application/navigateur alternatif n'y échappe.
+> Sur un téléphone Android qui ne supporte pas non plus cette technologie
+> (modèle ancien/entrée de gamme), le bouton reste grisé, comme pour le
+> casque.
+
+| Action | Geste tactile |
+|---|---|
+| Poser le modèle sur la surface visée | Tape l'écran (1ère fois) |
+| Choisir l'outil (déplacer/colorer/mesurer/capturer) | Barre d'outils en haut de l'écran (identique au mode souris) |
+| Déplacer tout le modèle à main levée (onglet MAIN LIBRE) | Tape et glisse le doigt sur le modèle |
+| Déplacer/tourner précisément (onglet PRÉCISION) | Tape et glisse le doigt sur une flèche/anneau |
+| Colorer une pièce (onglet COULEUR) | Choisis une couleur puis tape la pièce |
+| Mesurer (onglet MESURES) | Tape un 1er point, puis un 2e |
+| Prendre une photo (onglet CAPTURE) | Bouton « PRENDRE UNE PHOTO » |
+| Quitter | Bouton rouge « QUITTER » de la barre d'outils |
+
+> ⚠️ **Limite connue de cette v1** : contrairement au casque (bouton A +
+> gâchette) ou à la souris (Maj + clic), il n'y a pas encore de moyen de
+> choisir UNE pièce précise à déplacer à main levée sur téléphone - tape et
+> glisse sur le modèle déplace le modèle ENTIER. Pour manipuler une pièce
+> seule, utilise l'onglet PRÉCISION (le gizmo, lui, fonctionne pièce par
+> pièce comme ailleurs).
 
 ## Ajouter un modèle depuis 3DEXPERIENCE
 

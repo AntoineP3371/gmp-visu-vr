@@ -22,12 +22,28 @@ if (typeof THREE === 'undefined') {
 }
 status.textContent = 'Three.js OK';
 
+// Le bouton "telephone" (AR tactile, cf plus bas) n'a de sens que sur
+// Android - iPhone/Safari n'a de toute facon pas cette technologie (hors
+// perimetre, decide avec l'utilisateur), et un ordinateur n'a pas de camera
+// a filmer pour poser le modele dessus.
+var estAndroid = /Android/.test(navigator.userAgent);
+var btnTelephoneEl = document.getElementById('btnTelephone');
+if (!estAndroid) {
+  btnTelephoneEl.disabled = true;
+  btnTelephoneEl.textContent = 'Realite augmentee (telephone Android uniquement)';
+}
+
 if (!navigator.xr) {
   status.textContent = 'WebXR non disponible';
+  btnTelephoneEl.disabled = true;
 } else {
   navigator.xr.isSessionSupported('immersive-ar').then(function (ok) {
     status.textContent = ok ? 'AR pret !' : 'AR non supporte';
     if (!ok) document.getElementById('btnCommencer').disabled = true;
+    if (!ok && estAndroid) {
+      btnTelephoneEl.disabled = true;
+      btnTelephoneEl.textContent = 'Realite augmentee sur telephone (AR non supporte)';
+    }
   });
 }
 
@@ -1821,7 +1837,22 @@ function gererSelectStart(idx, ctrl) {
     if (hitsMesure.length) gererClicMesure(hitsMesure[0]);
     return;
   }
-  // MODE.LIBRE : rien au clic gachette, la saisie se fait au grip
+  // MODE.LIBRE : rien au clic gachette, la saisie se fait au grip - sauf sur
+  // telephone, qui n'a pas de capteur de prehension : le tap+glisser reprend
+  // exactement la logique du grip (squeezestart plus bas), simplement
+  // declenchee par 'select' au lieu de 'squeeze'.
+  if (modeTelephone && mode === MODE.LIBRE && grabIdx === -1 && !modeZoom) {
+    var cLibre = cibleCourante();
+    if (cLibre) {
+      var pLibre = new THREE.Vector3();
+      ctrl.getWorldPosition(pLibre);
+      if (cibleActive() || pointDeGrabProche(pLibre)) {
+        grabIdx = idx;
+        grabAvant = capturerMatricesMonde(objetsCiblesActuels());
+        ctrl.attach(cLibre);
+      }
+    }
+  }
 }
 
 // Lit l'etat d'un bouton de la manette (A/X = bouton 4 sur le mapping
@@ -2059,6 +2090,7 @@ controllers.forEach(function (ctrl, idx) {
   });
   ctrl.addEventListener('selectend', function () {
     selectTenu[idx] = false;
+    if (modeTelephone && grabIdx === idx) terminerGrab();
     if (dragEtat && dragEtat.idx === idx) {
       var apres = capturerMatricesMonde(dragEtat.objets);
       enregistrerTransformSiChange(dragEtat.objets, dragEtat.avant, apres);
@@ -2111,7 +2143,14 @@ renderer.setAnimationLoop(function (time, frame) {
         surTable = true;
       }
     }
-    if (!surTable) controllers[0].getWorldPosition(cible);
+    if (!surTable) {
+      // Sur telephone, controllers[0] ne represente une position que PENDANT
+      // un toucher (source d'entree tactile transitoire, pas une manette
+      // suivie en continu) - se rabattre sur la camera pour un apercu de pose
+      // coherent avant le 1er tap.
+      if (modeTelephone) camera.getWorldPosition(cible);
+      else controllers[0].getWorldPosition(cible);
+    }
 
     preview.position.copy(cible);
     preview.visible = true;
@@ -2122,7 +2161,7 @@ renderer.setAnimationLoop(function (time, frame) {
 
   if (anchorPlaced) {
     preview.visible = false;
-    roue.visible = carPret && !modeBureau;
+    roue.visible = carPret && !modeBureau && !modeTelephone;
   }
 
   if (modeBureau) majCameraBureau();
@@ -2178,7 +2217,7 @@ renderer.setAnimationLoop(function (time, frame) {
   // Sans rien tenir d'autre : viser une piece au laser (gachette tenue) et
   // pousser le joystick haut/bas regle SA transparence directement, sans
   // passer par une selection A+gachette au prealable.
-  if (!modeBureau) {
+  if (!modeBureau && !modeTelephone) {
     pollAppelRoue();
     pollUndoRedoJoystick();
     pollSurvolRoue();
@@ -2209,11 +2248,26 @@ renderer.setAnimationLoop(function (time, frame) {
     if (!transpAffichee) spriteTransp.visible = false;
   }
 
-  if (panneauSale) dessinerRoue();
-  if (modeBureau) majBarreBureau();
+  if (panneauSale && !modeTelephone) dessinerRoue();
+  if (modeBureau || modeTelephone) majBarreBureau();
 
   renderer.render(scene, camera);
 });
+
+// Certains casques/navigateurs rejettent la session en bloc si UNE SEULE
+// fonctionnalite optionnelle listee n'est pas accordable (alors que la norme
+// dit qu'elle devrait juste etre ignoree) : on retente donc avec une
+// configuration de plus en plus reduite plutot que d'abandonner d'un coup.
+// Partagee entre le bouton casque et le bouton telephone (configs differentes).
+function tenterSessionCascade(configs, i) {
+  return navigator.xr.requestSession('immersive-ar', configs[i]).catch(function (e) {
+    if (i + 1 < configs.length) {
+      status.textContent = 'Config AR ' + (i + 1) + ' refusee, nouvel essai...';
+      return tenterSessionCascade(configs, i + 1);
+    }
+    throw e;
+  });
+}
 
 // --- Bouton "Entrer en realite mixte" ---
 document.getElementById('btnCommencer').addEventListener('click', function () {
@@ -2222,10 +2276,6 @@ document.getElementById('btnCommencer').addEventListener('click', function () {
   nomModeleCourant = modeleChoisi.nom;
   historique = []; refaire = [];
 
-  // Certains casques/navigateurs rejettent la session en bloc si UNE SEULE
-  // fonctionnalite optionnelle listee n'est pas accordable (alors que la
-  // norme dit qu'elle devrait juste etre ignoree) : on retente donc avec une
-  // configuration de plus en plus reduite plutot que d'abandonner d'un coup.
   // Seul 'local' est reellement utilise par le code (renderer.xr.setReferenceSpaceType) ;
   // 'hit-test' et 'local-floor' sont un bonus, jamais indispensables.
   var CONFIGS_AR = [
@@ -2234,17 +2284,7 @@ document.getElementById('btnCommencer').addEventListener('click', function () {
     {}
   ];
 
-  function tenterSessionAR(i) {
-    return navigator.xr.requestSession('immersive-ar', CONFIGS_AR[i]).catch(function (e) {
-      if (i + 1 < CONFIGS_AR.length) {
-        status.textContent = 'Config AR ' + (i + 1) + ' refusee, nouvel essai...';
-        return tenterSessionAR(i + 1);
-      }
-      throw e;
-    });
-  }
-
-  tenterSessionAR(0).then(function (session) {
+  tenterSessionCascade(CONFIGS_AR, 0).then(function (session) {
     status.textContent = 'Session creee !';
     renderer.xr.setSession(session).then(function () {
       overlay.style.display = 'none';
@@ -2265,6 +2305,7 @@ document.getElementById('btnCommencer').addEventListener('click', function () {
 // Remise a zero commune entre la fin d'une session AR et la sortie du mode
 // bureau, pour pouvoir choisir un autre modele proprement dans les deux cas.
 function reinitialiserApresSession() {
+  modeTelephone   = false;
   anchorPlaced    = false;
   anchor.visible  = false;
   reticle.visible = false;
@@ -2301,6 +2342,7 @@ function reinitialiserApresSession() {
 //  mode bureau. Le panneau 3D est remplace par la barre HTML #barreBureau.
 // ============================================================================
 var modeBureau = false;
+var modeTelephone = false;
 var dragBureau = null;
 var orbite = { cible: new THREE.Vector3(0, 0.15, 0), distance: 0.6, yaw: 0.6, tangage: 0.45 };
 var etatSourisOrbite = null;
@@ -2542,6 +2584,16 @@ document.getElementById('bPrendrePhoto').addEventListener('click', capturerPhoto
 document.getElementById('bFondAR').addEventListener('click', function () { fondCapture = 'ar'; majBarreBureau(); });
 document.getElementById('bFondVR').addEventListener('click', function () { fondCapture = 'vr'; majBarreBureau(); });
 document.getElementById('bQuitterBureau').addEventListener('click', function () {
+  // En mode telephone, la barre est affichee PAR-DESSUS une session WebXR
+  // active (dom-overlay) : il faut terminer cette session (la camera reste
+  // sinon allumee derriere l'ecran d'accueil) - le nettoyage (overlay,
+  // reinitialiserApresSession...) est alors fait par le listener 'end' pose
+  // au demarrage de la session, pas ici.
+  if (modeTelephone) {
+    var sessionActive = renderer.xr.getSession();
+    if (sessionActive) sessionActive.end();
+    return;
+  }
   reinitialiserApresSession();
   modeBureau = false;
   barreBureau.classList.remove('visible');
@@ -2599,6 +2651,18 @@ function majBarreBureau() {
   Array.prototype.forEach.call(secCouleur.querySelectorAll('.swatch'), function (sw) {
     sw.classList.toggle('actif', parseInt(sw.dataset.idx, 10) === couleurIdx);
   });
+
+  // La barre est partagee entre le mode souris (aide = gestes souris) et le
+  // mode telephone (aide = gestes tactiles) - meme structure, texte adapte.
+  document.getElementById('aideLibre').textContent = modeTelephone
+    ? 'Tapoter et glisser sur le modele : le deplacer a main levee'
+    : 'Glisser = orbiter · Molette = zoom vue · Maj+clic = choisir une piece · Ctrl+glisser = deplacer la cible';
+  document.getElementById('aidePrecision').textContent = modeTelephone
+    ? 'Tapoter + glisser sur une fleche/anneau'
+    : 'Ctrl+glisser sur une fleche/anneau';
+  document.getElementById('aideMesure').textContent = modeTelephone
+    ? 'Tapoter un 1er point, puis un 2eme : distance reelle affichee (mm)'
+    : 'Ctrl+clic sur un 1er point, puis un 2eme : distance reelle affichee (mm)';
 }
 
 // --- Bouton "Voir sur cet ecran (souris)" ---
@@ -2622,6 +2686,52 @@ document.getElementById('btnBureau').addEventListener('click', function () {
 
   chargerModele(fichier);
   majBarreBureau();
+});
+
+// --- Bouton "Realite augmentee sur telephone" (Android, tactile) ---
+document.getElementById('btnTelephone').addEventListener('click', function () {
+  var fichier = modeleChoisi.fichier;
+  if (!fichier) { status.textContent = 'Choisissez un modele'; return; }
+  nomModeleCourant = modeleChoisi.nom;
+  historique = []; refaire = [];
+
+  // Meme cascade de repli que le casque, avec en plus 'dom-overlay' pour
+  // afficher la barre d'outils du mode souris par-dessus l'image de la
+  // camera - pas de manette sur telephone, donc pas de menu en disque : on
+  // reutilise directement #barreBureau (mêmes boutons, mêmes fonctions).
+  var CONFIGS_AR_TEL = [
+    { optionalFeatures: ['hit-test', 'dom-overlay'], domOverlay: { root: barreBureau } },
+    { optionalFeatures: ['dom-overlay'], domOverlay: { root: barreBureau } },
+    { optionalFeatures: ['hit-test'] },
+    {}
+  ];
+
+  // La barre doit deja etre visible/dans la mise en page AVANT la demande de
+  // session (le navigateur lit domOverlay.root a ce moment-la) - on la
+  // recache si la demande echoue finalement.
+  barreBureau.classList.add('visible');
+
+  tenterSessionCascade(CONFIGS_AR_TEL, 0).then(function (session) {
+    status.textContent = 'Session creee !';
+    renderer.xr.setSession(session).then(function () {
+      overlay.style.display = 'none';
+      modeTelephone = true;
+      chargerModele(fichier);
+      majBarreBureau();
+
+      session.addEventListener('end', function () {
+        barreBureau.classList.remove('visible');
+        overlay.style.display = 'flex';
+        reinitialiserApresSession();
+      });
+    }).catch(function (e2) {
+      barreBureau.classList.remove('visible');
+      status.textContent = 'Erreur setSession: ' + e2.message;
+    });
+  }).catch(function (e) {
+    barreBureau.classList.remove('visible');
+    status.textContent = 'Erreur AR: ' + e.message;
+  });
 });
 
 }); // fin window.addEventListener('load', ...)

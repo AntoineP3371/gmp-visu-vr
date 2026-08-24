@@ -174,13 +174,14 @@
       </div>
 
       <button class="btn primaire" id="btnCommencer">Entrer en realite mixte</button>
+      <button class="btn secondaire" id="btnTelephone">Realite augmentee sur telephone</button>
       <button class="btn secondaire" id="btnBureau">Voir sur cet ecran (souris)</button>
 
       <div id="status">Chargement...</div>
       <div id="errbox"></div>
     </div>
 
-    <div id="version">v1.14.0</div>
+    <div id="version">v1.15.0</div>
   </div>
   <canvas id="c"></canvas>
 
@@ -199,7 +200,7 @@
       <button class="rouge" id="bQuitterBureau">QUITTER</button>
     </div>
     <div class="ligne section" id="secLibre">
-      <span class="aide">Glisser = orbiter &middot; Molette = zoom vue &middot; Maj+clic = choisir une piece &middot; Ctrl+glisser = deplacer la cible</span>
+      <span class="aide" id="aideLibre">Glisser = orbiter &middot; Molette = zoom vue &middot; Maj+clic = choisir une piece &middot; Ctrl+glisser = deplacer la cible</span>
       <button id="bDeselectionner">DESELECTIONNER</button>
     </div>
     <div class="ligne section" id="secPrecision">
@@ -208,7 +209,7 @@
       <button id="b0Pos">0 POSITION</button>
       <button id="b0Rot">0 ROTATION</button>
       <button id="b0Tout">TOUT A ZERO</button>
-      <span class="aide">Ctrl+glisser sur une fleche/anneau</span>
+      <span class="aide" id="aidePrecision">Ctrl+glisser sur une fleche/anneau</span>
     </div>
     <div class="ligne section" id="secEchelle">
       <span class="aide">Echelle : <b id="bEchelleTxt">100 %</b></span>
@@ -225,7 +226,7 @@
       <button id="bReinitCouleurs">REINITIALISER</button>
     </div>
     <div class="ligne section" id="secMesure">
-      <span class="aide">Ctrl+clic sur un 1er point, puis un 2eme : distance reelle affichee (mm)</span>
+      <span class="aide" id="aideMesure">Ctrl+clic sur un 1er point, puis un 2eme : distance reelle affichee (mm)</span>
       <button id="bMesurePrecedente">&#9664; PRECEDENTE</button>
       <span class="aide" id="bInfoMesures">Aucune mesure</span>
       <button id="bMesureSuivante">SUIVANTE &#9654;</button>
@@ -276,6 +277,6 @@
   <script src="three.min.js"></script>
   <script src="GLTFLoader.js"></script>
   <script src="drive-config.js?v=1.12.1"></script>
-  <script src="app.js?v=1.14.0"></script>
+  <script src="app.js?v=1.15.0"></script>
 </body>
 </html>
