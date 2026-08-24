@@ -1962,13 +1962,19 @@ function capturerPhoto() {
 //  de l'AUTRE manette. Remplace le panneau plat des versions precedentes.
 //  Arborescence figee ici, une seule fois (dessin ET clic la relisent).
 // ============================================================================
+// "accent" : une couleur par categorie racine (retour utilisateur "une
+// couleur par cercle") - appliquee au cercle lui-meme (fond) sur ce noeud ET
+// sur tous ses descendants, pour reperer d'un coup d'oeil dans quelle
+// branche on se trouve. Le fil "actif" (yeux appuye dessus) reste indique
+// UNIQUEMENT par l'anneau jaune epais, plus par un changement de fond -
+// sinon les deux se marcheraient dessus.
 var MENU_RACINE = [
-  { label: 'Couleurs', icone: 'palette', sub: [
+  { label: 'Couleurs', icone: 'palette', accent: '#993556', sub: [
       { label: 'Automatique', icone: 'pinceau', action: colorierAutomatiquement },
       { label: 'Manuel', icone: 'pinceau', action: function () { definirMode(MODE.COULEUR); }, couleurs: true },
       { label: 'RAZ', icone: 'reset', action: reinitialiserCouleurs }
   ] },
-  { label: 'Deplacements', icone: 'deplacer', sub: [
+  { label: 'Deplacements', icone: 'deplacer', accent: '#185fa5', sub: [
       { label: 'Libre', icone: 'deplacer', action: revenirLibre },
       { label: 'Precis', icone: 'cible', sub: [
           { label: 'Translation', icone: 'flechedouble', action: function () { definirMode(MODE.GIZMO_T); } },
@@ -1976,14 +1982,14 @@ var MENU_RACINE = [
       ] },
       { label: 'RAZ generale', texte: 'RAZ tout', icone: 'reset', action: razGenerale }
   ] },
-  { label: 'Mesures', texte: 'Mesures', icone: 'regle', action: function () { definirMode(MODE.MESURE); }, mesures: true },
-  { label: 'Annuler / Refaire / Quitter / Remettre', texte: 'Actions', icone: 'undo', sub: [
+  { label: 'Mesures', texte: 'Mesures', icone: 'regle', accent: '#0f6e56', action: function () { definirMode(MODE.MESURE); }, mesures: true },
+  { label: 'Annuler / Refaire / Quitter / Remettre', texte: 'Actions', icone: 'undo', accent: '#534ab7', sub: [
       { label: 'Annuler', icone: 'undo', action: annuler },
       { label: 'Refaire', icone: 'redo', action: retablir },
       { label: 'Quitter', icone: 'porte', action: quitterAR },
       { label: 'Remettre sur la table', texte: 'Remettre', icone: 'table', action: replacer }
   ] },
-  { label: "Capture d'affichage", texte: 'Capture', icone: 'camera', sub: [
+  { label: "Capture d'affichage", texte: 'Capture', icone: 'camera', accent: '#854f0b', sub: [
       { label: 'Cadre', icone: 'camera', action: entrerModePhoto },
       { label: 'Fond', icone: 'image', sub: [
           { label: 'Realite virtuelle',  texte: 'Bleu GMP', action: function () { fondCapture = 'vr'; } },
@@ -2012,6 +2018,34 @@ roue.visible = false;
 
 var panneauSale = true;      // nom garde pour tous les appels existants ;
 function majPanneau() { panneauSale = true; }   // marque desormais la ROUE a redessiner
+
+// Logo GMP au centre du menu racine (retour utilisateur "logo GMP a la
+// place du texte MENU") - charge une fois, redessine la roue des que
+// disponible (elle peut deja avoir ete dessinee avec le texte de secours
+// avant la fin du chargement).
+var logoRoueImg = new Image();
+var logoRoueChargee = false;
+logoRoueImg.onload = function () { logoRoueChargee = true; majPanneau(); };
+logoRoueImg.src = 'gmp-logo.png';
+
+// Racine de la branche courante (roueStack[0]) : porte la couleur "accent"
+// a appliquer a TOUS les noeuds de cette branche, a n'importe quelle
+// profondeur - au niveau racine, chaque noeud garde sa PROPRE couleur.
+function accentBrancheCourante() {
+  return roueStack.length ? roueStack[0].accent : null;
+}
+// Reduit la taille de police jusqu'a ce que le texte tienne dans la largeur
+// donnee (retour utilisateur : le texte depassait des cercles) - jamais en
+// dessous de 10px pour rester lisible.
+function ajusterPoliceRoue(texte, largeurMax, tailleDepart) {
+  var taille = tailleDepart;
+  rctx.font = 'bold ' + taille + 'px sans-serif';
+  while (taille > 10 && rctx.measureText(texte).width > largeurMax) {
+    taille -= 1;
+    rctx.font = 'bold ' + taille + 'px sans-serif';
+  }
+  return taille;
+}
 
 var _palRoueNodes = null;
 function noeudsRoue() {
@@ -2187,7 +2221,12 @@ function dessinerRoue() {
       return;
     }
     var actif = estActifRoue(p.node);
-    rctx.fillStyle = actif ? '#2c5aa0' : '#242c37';
+    // Couleur du cercle = identite de branche (retour utilisateur "une
+    // couleur par cercle") : propre a chaque noeud racine, ou heritee de la
+    // racine de branche a toute profondeur en dessous. Le fil "actif" n'est
+    // plus indique par un changement de fond (sinon ca ecraserait cette
+    // couleur), seulement par l'anneau jaune epais ci-dessous.
+    rctx.fillStyle = p.node.accent || accentBrancheCourante() || '#242c37';
     cerclePlein(p.x, p.y, RNODE / 2); rctx.fill();
     rctx.strokeStyle = actif ? '#ffee00' : '#3a4553';
     rctx.lineWidth = actif ? 5 : 2;
@@ -2204,9 +2243,13 @@ function dessinerRoue() {
 
     rctx.fillStyle = '#fff'; rctx.textAlign = 'center';
     var texteNoeud = p.node.texte || p.node.label;
+    // Largeur max = corde du cercle a la hauteur du texte, avec une marge -
+    // sinon un libelle un peu long depasse visuellement du cercle (retour
+    // utilisateur).
+    var largeurMaxTexte = RNODE * 0.82;
     var mots = texteNoeud.split(' ');
     if (mots.length === 1) {
-      rctx.font = texteNoeud.length > 9 ? 'bold 15px sans-serif' : 'bold 18px sans-serif';
+      ajusterPoliceRoue(texteNoeud, largeurMaxTexte, texteNoeud.length > 9 ? 15 : 18);
       rctx.fillText(texteNoeud, p.x, p.y + 6 + decalageY);
     } else {
       // Repartit les mots sur 2 lignes en equilibrant leur longueur (plutot
@@ -2218,9 +2261,14 @@ function dessinerRoue() {
         var ecart = Math.abs(l1 - l2);
         if (ecart < meilleurEcart) { meilleurEcart = ecart; meilleureCoupe = s; }
       }
-      rctx.font = 'bold 15px sans-serif';
-      rctx.fillText(mots.slice(0, meilleureCoupe).join(' '), p.x, p.y - 10 + decalageY);
-      rctx.fillText(mots.slice(meilleureCoupe).join(' '), p.x, p.y + 10 + decalageY);
+      var ligne1 = mots.slice(0, meilleureCoupe).join(' '), ligne2 = mots.slice(meilleureCoupe).join(' ');
+      var tailleCommune = Math.min(
+        ajusterPoliceRoue(ligne1, largeurMaxTexte, 15),
+        ajusterPoliceRoue(ligne2, largeurMaxTexte, 15)
+      );
+      rctx.font = 'bold ' + tailleCommune + 'px sans-serif';
+      rctx.fillText(ligne1, p.x, p.y - 10 + decalageY);
+      rctx.fillText(ligne2, p.x, p.y + 10 + decalageY);
     }
   });
 
@@ -2230,8 +2278,18 @@ function dessinerRoue() {
   rctx.strokeStyle = survoleHub ? '#ffffff' : '#2f8fd6';
   rctx.lineWidth = survoleHub ? 5 : 2;
   cerclePlein(c, c, RHUB); rctx.stroke();
-  rctx.fillStyle = '#fff'; rctx.font = 'bold 16px sans-serif'; rctx.textAlign = 'center';
-  rctx.fillText(roueStack.length ? '< RETOUR' : 'MENU', c, c + 6);
+  if (roueStack.length) {
+    rctx.fillStyle = '#fff'; rctx.font = 'bold 16px sans-serif'; rctx.textAlign = 'center';
+    rctx.fillText('< RETOUR', c, c + 6);
+  } else if (logoRoueChargee) {
+    // Logo GMP a la place du texte "MENU" (retour utilisateur), garde ses
+    // proportions naturelles.
+    var logoL = RHUB * 1.15, logoH = logoL * (logoRoueImg.naturalHeight / logoRoueImg.naturalWidth);
+    rctx.drawImage(logoRoueImg, c - logoL / 2, c - logoH / 2, logoL, logoH);
+  } else {
+    rctx.fillStyle = '#fff'; rctx.font = 'bold 16px sans-serif'; rctx.textAlign = 'center';
+    rctx.fillText('MENU', c, c + 6);
+  }
 
   rtex.needsUpdate = true;
 }
