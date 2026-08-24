@@ -149,13 +149,36 @@
 
   var loader = new THREE.GLTFLoader();
 
+  // Vrai tant qu'on n'a pas encore recu/applique de position pour le modele
+  // fraichement charge - des que c'est fait, la camera se recentre UNE FOIS
+  // dessus automatiquement (voir recentrerCamera()) ; remis a true a chaque
+  // nouveau modele/nouvelle source pour que "par defaut, centre sur l'ecran"
+  // reste vrai a chaque changement, sans pour autant re-recentrer sans arret
+  // et gener quelqu'un qui a deplace la vue a la molette entre-temps.
+  var attenteCentrage = true;
+
   function viderModele() {
     if (racineSpectateur) { groupeModele.remove(racineSpectateur); }
     racineSpectateur = null; pieces = []; piecesMobiles = [];
     groupeModele.position.set(0, 0, 0); groupeModele.quaternion.identity(); groupeModele.scale.set(1, 1, 1);
+    attenteCentrage = true;
     if (laserLigne) laserLigne.visible = false;
     if (laserPoint) laserPoint.visible = false;
     if (avatarTete) avatarTete.visible = false;
+  }
+
+  // Cadre la camera sur le modele entier (utilise sa boite englobante
+  // MONDE, donc valable quels que soient sa position/echelle recues) -
+  // appele une fois des que la premiere position du modele est connue.
+  function recentrerCamera() {
+    if (!racineSpectateur) return;
+    scene.updateMatrixWorld(true);
+    var box = new THREE.Box3().setFromObject(groupeModele);
+    if (box.isEmpty()) return;
+    var centre = new THREE.Vector3(); box.getCenter(centre);
+    var sphere = new THREE.Sphere(); box.getBoundingSphere(sphere);
+    cible.copy(centre);
+    orbit.rayon = Math.max(0.15, sphere.radius * 2.2);
   }
 
   function chargerModeleSpectateur(fichier, apresChargement) {
@@ -204,6 +227,7 @@
     if (id === 'm') {
       // Deja relative a l'ancre (= l'origine ici) : utilisable directement.
       mat.decompose(groupeModele.position, groupeModele.quaternion, groupeModele.scale);
+      if (attenteCentrage) { recentrerCamera(); attenteCentrage = false; }
       return;
     }
     var piece = piecesMobiles[id];
