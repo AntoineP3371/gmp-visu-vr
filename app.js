@@ -140,11 +140,18 @@ scene.add(camera);
 // modeles (materiaux sombres/metalliques issus d'export STEP) restaient trop
 // sombres avec une seule lumiere directionnelle - la 2eme, en contre-jour,
 // eclaire les faces que la 1ere laisse dans l'ombre.
-scene.add(new THREE.AmbientLight(0xffffff, 1.8));
-var dirLight = new THREE.DirectionalLight(0xffffff, 1.1);
+// Intensites revues a la baisse (etaient 1.8/1.1/0.7) : elles avaient ete
+// AUGMENTEES en v1.16.2 pour compenser un modele trop sombre, avant de
+// trouver la vraie cause (sRGB manquant, corrige juste au-dessus en v1.17.0)
+// - les deux corrections cumulees rendaient les couleurs trop pales/delavees
+// au casque (double compensation). Ambiante baissee (c'est elle qui aplatit
+// le rendu), directionnelle principale legerement remontee (c'est elle qui
+// donne du relief/contraste, l'inverse de "pale").
+scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+var dirLight = new THREE.DirectionalLight(0xffffff, 1.3);
 dirLight.position.set(1, 2, 1);
 scene.add(dirLight);
-var dirLight2 = new THREE.DirectionalLight(0xffffff, 0.7);
+var dirLight2 = new THREE.DirectionalLight(0xffffff, 0.35);
 dirLight2.position.set(-1, 0.5, -1.5);
 scene.add(dirLight2);
 
@@ -2856,6 +2863,20 @@ function reinitialiserApresSession() {
   idHoverRoue = null;
   etatTranspSelection = { niveauTransp: 0 };
   spriteTransp.visible = false;
+
+  // Historique Annuler/Refaire et aimantation : sans ca, changer de modele
+  // laissait trainer des references a des objets de l'ANCIEN modele (detache
+  // de la scene) - Annuler pouvait sembler ne rien faire, et le fantome
+  // d'aimantation pouvait rester construit sur l'ancienne geometrie tant que
+  // la meme cible (le pivot, stable d'un modele a l'autre) redeclenchait le
+  // cache de construireFantomeSiBesoin().
+  historique = []; refaire = [];
+  dragEtat = null;
+  viderFantome();
+  _dernierAimantAxe = null;
+  // Fond gris du mode bureau (cf btnBureau) : jamais pertinent en AR/VR, ou
+  // la scene doit rester transparente pour laisser voir le passthrough.
+  scene.background = null;
 }
 
 // ============================================================================
@@ -3226,6 +3247,10 @@ document.getElementById('btnBureau').addEventListener('click', function () {
   overlay.style.display = 'none';
   barreBureau.classList.add('visible');
   redimensionnerBureau();
+  // Fond noir par defaut (couleur d'effacement WebGL standard, jamais definie
+  // explicitement jusqu'ici) remplace par un gris neutre de style visionneuse
+  // CAO, pour ne pas gener la lecture des couleurs du modele.
+  scene.background = new THREE.Color(0x3a4048);
 
   anchor.position.set(0, 0, 0);
   anchor.quaternion.identity();
