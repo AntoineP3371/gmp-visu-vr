@@ -1,4 +1,4 @@
-# Visionneuse CAO en réalité mixte — v1.16.0
+# Visionneuse CAO en réalité mixte — v1.17.0
 
 Application WebXR pour Meta Quest 3 : pose n'importe quel modèle 3D (issu
 d'une modélisation 3DEXPERIENCE) sur une vraie table, manipule-le à main
@@ -168,7 +168,8 @@ logiciel gratuit : **FreeCAD**.
    ]
    ```
 6. Relance `serveur.bat` (ou republie sur GitHub Pages) : le modèle
-   apparaît dans la liste déroulante de l'écran d'accueil.
+   apparaît dans le panneau « Modèles disponibles » à côté de l'écran
+   d'accueil.
 
 > Si le modèle apparaît tout noir ou aux mauvaises couleurs dans le
 > casque, c'est normal : les exports STEP n'ont pas toujours de couleurs
@@ -323,8 +324,11 @@ pas besoin de créer un nouveau compte :
 
 - Un seul « acteur » affiché à la fois côté spectateur (celui qui vient
   d'émettre) - pas de galerie multi-casques comme sur VR CEC.
-- Le spectateur a sa **propre caméra libre** (glisser/molette), ce n'est PAS
-  la vue à travers les yeux du casque.
+- Le spectateur a sa **propre caméra libre** (glisser = orbiter, molette =
+  zoom, **clic molette maintenu = translater la vue**), ce n'est PAS la vue
+  à travers les yeux du casque - à la place, un petit **avatar en forme de
+  casque** (avec une flèche jaune indiquant le regard) montre où se trouve
+  et où regarde l'utilisateur casque/téléphone.
 
 ## Publier une mise à jour en ligne (GitHub Pages)
 

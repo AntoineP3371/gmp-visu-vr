@@ -14,7 +14,6 @@ var canvas  = document.getElementById('c');
 var errbox  = document.getElementById('errbox');
 var boutonModeleChoisi = document.getElementById('boutonModeleChoisi');
 var listeModelesEl     = document.getElementById('listeModeles');
-var menuModeleEl       = document.getElementById('menuModele');
 
 if (typeof THREE === 'undefined') {
   status.textContent = 'Erreur: Three.js non charge';
@@ -69,9 +68,10 @@ function ajouterOptionModele(nom, valeur) {
 function definirModeleChoisi(nom, valeur) {
   modeleChoisi = { nom: nom, fichier: valeur };
   boutonModeleChoisi.textContent = nom;
-  listeModelesEl.classList.remove('ouverte');
   redessinerListeModeles();
 }
+// Panneau toujours visible a cote de la carte d'accueil (plus une liste
+// deroulante) : un bouton par modele, celui choisi est mis en evidence.
 function redessinerListeModeles() {
   listeModelesEl.innerHTML = '';
   listeModelesOptions.forEach(function (m) {
@@ -83,13 +83,6 @@ function redessinerListeModeles() {
     listeModelesEl.appendChild(b);
   });
 }
-boutonModeleChoisi.addEventListener('click', function () {
-  listeModelesEl.classList.toggle('ouverte');
-});
-// Ferme la liste si on clique/touche ailleurs sur la page.
-document.addEventListener('click', function (e) {
-  if (!menuModeleEl.contains(e.target)) listeModelesEl.classList.remove('ouverte');
-});
 
 function configDriveValide(cle) {
   var cfg = window.DRIVE_CONFIG;
@@ -129,6 +122,10 @@ var gl = canvas.getContext('webgl2', { xrCompatible: true }) ||
          canvas.getContext('webgl',  { xrCompatible: true });
 var renderer = new THREE.WebGLRenderer({ canvas: canvas, context: gl, alpha: true, antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
+// Sans ca, les modeles GLB (materiaux PBR) ressortent nettement plus sombres
+// et ternes que prevu - piege classique three.js, le rendu par defaut n'est
+// pas corrige en sRGB pour l'affichage.
+renderer.outputEncoding = THREE.sRGBEncoding;
 renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType('local');
 
@@ -1261,6 +1258,22 @@ function diffuserPresenceSiActif(t) {
   diffuser('pres', { sid: SID, modele: fichierModeleCourant, nom: nomModeleCourant });
 }
 
+// Position/orientation de la tete (camera) - permet au spectateur d'afficher
+// un avatar simple representant l'utilisateur casque/telephone. Relative a
+// l'ancre, comme tout le reste (meme raison : la position physique dans la
+// piece n'a aucun sens pour le spectateur).
+var derniereTeteEnvoi = 0;
+function diffuserTeteSiActif(t) {
+  if (!carPret) return;
+  if (t - derniereTeteEnvoi < 100) return;
+  derniereTeteEnvoi = t;
+  scene.updateMatrixWorld(true);
+  var relatif = anchor.matrixWorld.clone().invert().multiply(camera.matrixWorld);
+  var pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3();
+  relatif.decompose(pos, quat, scl);
+  diffuser('tete', { sid: SID, o: pos.toArray(), q: quat.toArray() });
+}
+
 // Etat du laser d'une manette (origine + direction du rayon) - diffuse tant
 // que la gachette est tenue, throttle a ~14 Hz ; un message "off" au
 // relachement pour que le spectateur l'eteigne (sinon il resterait affiche
@@ -2358,6 +2371,7 @@ renderer.setAnimationLoop(function (time, frame) {
   if (dragEtat) { if (dragEtat.mode === 'translate') majDragTranslate(); else majDragRotate(); }
   diffuserPoseLiveSiActif(time);
   diffuserPresenceSiActif(time);
+  diffuserTeteSiActif(time);
   if (flashPhoto.material.opacity > 0) majFlash();
   if (mesureActiveId != null) {
     // Une piece a pu bouger juste au-dessus (grip, zoom, glissement gizmo) :

@@ -69,6 +69,9 @@
   var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setClearColor(0x0d1219, 1);
+  // Meme correction sRGB que app.js, sinon les modeles ressortent plus
+  // sombres/ternes que dans le casque.
+  renderer.outputEncoding = THREE.sRGBEncoding;
 
   var scene = new THREE.Scene();
   // Meme renforcement d'eclairage que app.js (certains modeles restaient
@@ -152,6 +155,7 @@
     groupeModele.position.set(0, 0, 0); groupeModele.quaternion.identity(); groupeModele.scale.set(1, 1, 1);
     if (laserLigne) laserLigne.visible = false;
     if (laserPoint) laserPoint.visible = false;
+    if (avatarTete) avatarTete.visible = false;
   }
 
   function chargerModeleSpectateur(fichier, apresChargement) {
@@ -262,6 +266,43 @@
   }
   function eteindreLaser() { laserLigne.visible = false; laserPoint.visible = false; }
 
+  // ============================ AVATAR (tete du casque/telephone) ============================
+  // Petit casque stylise (construit avec des primitives, pas de fichier a
+  // charger) : un boitier + une visiere sombre + une fleche jaune qui pointe
+  // dans la direction du regard, pour qu'on comprenne l'orientation d'un
+  // coup d'oeil.
+  function creerAvatarTete() {
+    var g = new THREE.Group();
+    var corps = new THREE.Mesh(
+      new THREE.BoxGeometry(0.15, 0.075, 0.09),
+      new THREE.MeshStandardMaterial({ color: 0x2f8fd6, roughness: 0.5 }));
+    g.add(corps);
+    var visiere = new THREE.Mesh(
+      new THREE.BoxGeometry(0.12, 0.045, 0.02),
+      new THREE.MeshStandardMaterial({ color: 0x10222b, roughness: 0.3 }));
+    visiere.position.set(0, 0, -0.055);
+    g.add(visiere);
+    var fleche = new THREE.Mesh(
+      new THREE.ConeGeometry(0.02, 0.05, 10),
+      new THREE.MeshBasicMaterial({ color: 0xffcc00 }));
+    fleche.rotation.x = -Math.PI / 2;
+    fleche.position.set(0, 0, -0.095);
+    g.add(fleche);
+    g.visible = false;
+    return g;
+  }
+  var avatarTete = creerAvatarTete();
+  groupeAncre.add(avatarTete);
+  var _qTete = new THREE.Quaternion();
+
+  function appliquerTete(o, q) {
+    if (!o || !q) return;
+    avatarTete.position.set(o[0], o[1], o[2]);
+    _qTete.set(q[0], q[1], q[2], q[3]);
+    avatarTete.quaternion.copy(_qTete);
+    avatarTete.visible = true;
+  }
+
   // ============================ SOURCE ACTIVE ============================
   // Un seul modele affiche a la fois : celui de la source (sid) la plus
   // recemment active. Pas de galerie multi-sources (scenario a 2 personnes) -
@@ -282,6 +323,7 @@
       elRien.style.display = 'flex'; elCanvas.style.display = 'none';
       elTitre.textContent = "En attente d'un casque ou d'un telephone actif...";
       eteindreLaser();
+      avatarTete.visible = false;
     }
   }
 
@@ -339,6 +381,11 @@
         var p = m.payload || {}; if (p.sid !== sidActif) return;
         dernierMessage = Date.now();
         if (p.off) eteindreLaser(); else appliquerLaser(p.o, p.d);
+      });
+      canal.on('broadcast', { event: 'tete' }, function (m) {
+        var p = m.payload || {}; if (p.sid !== sidActif) return;
+        dernierMessage = Date.now();
+        appliquerTete(p.o, p.q);
       });
 
       canal.subscribe(function (s) {
