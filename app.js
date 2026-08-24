@@ -427,6 +427,15 @@ function objetsCiblesActuels() {
   if (cibleActive()) return selection.slice();
   return racineModele ? [racineModele] : [];
 }
+// Comme objetsCiblesActuels(), mais inclut aussi TOUTES les pieces
+// individuellement suivies quand la cible est le MODELE ENTIER - necessaire
+// pour que l'aimantation, dans ce cas precis, remette aussi en place (comme
+// RAZ GENERALE) les pieces deja deplacees individuellement, et que
+// l'historique Annuler/Refaire couvre ce deplacement silencieux.
+function objetsPourUndoAimant() {
+  var base = objetsCiblesActuels();
+  return cibleCourante() === pivot ? base.concat(piecesMobiles) : base;
+}
 
 function surlignerSelection() {
   piecesSurlignees.forEach(function (m) {
@@ -658,6 +667,20 @@ function razGenerale() {
   enregistrerTransformSiChange(objets, avant, apres);
   majPanneau();
 }
+// Reprend le coeur de razGenerale() (restaurer chaque piece individuellement
+// suivie a sa position d'origine relative au pivot), pour que l'aimantation
+// du MODELE ENTIER se comporte comme RAZ GENERALE plutot que comme resetTout
+// (qui ne touche que le pivot lui-meme) - decide avec l'utilisateur apres
+// son retour "si des mouvements d'autres pieces se font, la position est
+// perdue" en testant l'aimantation au casque.
+function restaurerPiecesMobilesSiPivot(c) {
+  if (c !== pivot) return;
+  scene.updateMatrixWorld(true);
+  piecesMobiles.forEach(function (p) {
+    var mondeCible = pivot.matrixWorld.clone().multiply(p.userData.matriceRelPivotOrigine);
+    definirMatriceMonde(p, mondeCible);
+  });
+}
 function resetAxeRotation(lettre) {
   var c = cibleCourante(); if (!c || !c.userData.origine) return;
   var avant = capturerMatricesMonde(objetsCiblesActuels());
@@ -700,8 +723,8 @@ function terminerGrab() {
   if (c) {
     parentLogiqueCible().attach(c);
     if (grabAvant) {
-      var apres = capturerMatricesMonde(objetsCiblesActuels());
-      enregistrerTransformSiChange(objetsCiblesActuels(), grabAvant, apres);
+      var apres = capturerMatricesMonde(objetsPourUndoAimant());
+      enregistrerTransformSiChange(objetsPourUndoAimant(), grabAvant, apres);
     }
   }
   grabIdx = -1;
@@ -738,6 +761,7 @@ function majAimantGrab() {
     }
     definirMatriceMonde(c, origineMonde);
     fantomeGroupe.visible = false;
+    restaurerPiecesMobilesSiPivot(c);
     return;
   }
 
@@ -760,6 +784,7 @@ function majAimantGrab() {
     definirMatriceMonde(c, origineMonde);
     vibrerManette(ctrl, 0.6, 60);
     fantomeGroupe.visible = false;
+    restaurerPiecesMobilesSiPivot(c);
   }
 }
 
@@ -856,15 +881,28 @@ function viderFantome() {
 // est le cas courant). fantomeGroupe est ensuite positionne a la pose MONDE
 // d'origine par positionnerFantome(), donc l'agencement relatif calcule ici
 // se retrouve reconstitue a la bonne place.
+// Cas particulier du MODELE ENTIER (c === pivot) : comme l'aimantation y
+// restaure aussi les pieces individuellement deplacees (cf
+// restaurerPiecesMobilesSiPivot), l'apercu doit montrer CETTE position
+// VRAIMENT D'ORIGINE (via matriceRelPivotOrigine), pas la position actuelle
+// (potentiellement deja deplacee) de chaque piece - sinon l'apercu ne
+// correspondrait pas a ce qui va reellement se passer.
 function construireFantome(c, objets) {
   viderFantome();
   scene.updateMatrixWorld(true);
+  var pivotEstCible = (c === pivot);
   var inverseCible = c.matrixWorld.clone().invert();
   objets.forEach(function (o) {
     o.traverse(function (m) {
       if (!m.isMesh) return;
       var clone = new THREE.Mesh(m.geometry, matFantome);
-      clone.matrix.copy(inverseCible).multiply(m.matrixWorld);
+      var piece = pivotEstCible ? trouverPieceRacine(m) : null;
+      if (piece && piece.userData.matriceRelPivotOrigine) {
+        var relMeshDansPiece = piece.matrixWorld.clone().invert().multiply(m.matrixWorld);
+        clone.matrix.copy(piece.userData.matriceRelPivotOrigine).multiply(relMeshDansPiece);
+      } else {
+        clone.matrix.copy(inverseCible).multiply(m.matrixWorld);
+      }
       clone.matrix.decompose(clone.position, clone.quaternion, clone.scale);
       fantomeGroupe.add(clone);
     });
@@ -898,7 +936,7 @@ function verifierAimantAxe(c, axeLettre, mode, ctrl) {
       fantomeGroupe.visible = true;
     } else { viderFantome(); }
     aimante = ecart < SEUIL_AIMANT_POS;
-    if (aimante) { c.position[axeLettre] = c.userData.origine.pos[axeLettre]; fantomeGroupe.visible = false; }
+    if (aimante) { c.position[axeLettre] = c.userData.origine.pos[axeLettre]; fantomeGroupe.visible = false; restaurerPiecesMobilesSiPivot(c); }
   } else {
     var eActuel  = new THREE.Euler().setFromQuaternion(c.quaternion, 'XYZ');
     var eOrigine = new THREE.Euler().setFromQuaternion(c.userData.origine.quat, 'XYZ');
@@ -913,7 +951,7 @@ function verifierAimantAxe(c, axeLettre, mode, ctrl) {
       fantomeGroupe.visible = true;
     } else { viderFantome(); }
     aimante = ecartRot < SEUIL_AIMANT_ROT;
-    if (aimante) { eActuel[axeLettre] = eOrigine[axeLettre]; c.quaternion.setFromEuler(eActuel); fantomeGroupe.visible = false; }
+    if (aimante) { eActuel[axeLettre] = eOrigine[axeLettre]; c.quaternion.setFromEuler(eActuel); fantomeGroupe.visible = false; restaurerPiecesMobilesSiPivot(c); }
   }
   return aimante;
 }
@@ -939,7 +977,7 @@ function verifierAimantLibreSouris(c) {
       c.getWorldQuaternion(new THREE.Quaternion()), new THREE.Vector3(1, 1, 1)));
     fantomeGroupe.visible = true;
   } else { viderFantome(); }
-  if (ecart < SEUIL_AIMANT_POS) { c.position.copy(c.userData.origine.pos); fantomeGroupe.visible = false; }
+  if (ecart < SEUIL_AIMANT_POS) { c.position.copy(c.userData.origine.pos); fantomeGroupe.visible = false; restaurerPiecesMobilesSiPivot(c); }
 }
 
 function majZoom() {
@@ -1174,7 +1212,7 @@ function demarrerDragTranslate(idx, poignee) {
   dragEtat = {
     idx: idx, poignee: poignee, mode: 'translate', axeLettre: poignee.axeLettre,
     posDepartControleur: p, posDepartPivot: posPivot,
-    objets: objetsCiblesActuels(), avant: capturerMatricesMonde(objetsCiblesActuels())
+    objets: objetsPourUndoAimant(), avant: capturerMatricesMonde(objetsPourUndoAimant())
   };
 }
 // Deplacement brut de la manette projete sur l'axe (figé au debut du drag,
@@ -1213,7 +1251,7 @@ function demarrerDragRotate(idx, poignee) {
     axeMonde: axeMonde, pivotPos: pivotPos,
     vDepart: projeteSurPlan(pC.clone().sub(pivotPos), axeMonde).normalize(),
     quatDepartPivot: qPivot,
-    objets: objetsCiblesActuels(), avant: capturerMatricesMonde(objetsCiblesActuels())
+    objets: objetsPourUndoAimant(), avant: capturerMatricesMonde(objetsPourUndoAimant())
   };
 }
 // Angle signe autour de l'axe, entre le vecteur de depart et le vecteur
@@ -2326,7 +2364,7 @@ function gererSelectStart(idx, ctrl) {
       ctrl.getWorldPosition(pLibre);
       if (cibleActive() || pointDeGrabProche(pLibre)) {
         grabIdx = idx;
-        grabAvant = capturerMatricesMonde(objetsCiblesActuels());
+        grabAvant = capturerMatricesMonde(objetsPourUndoAimant());
         ctrl.attach(cLibre);
       }
     }
@@ -2553,7 +2591,7 @@ controllers.forEach(function (ctrl, idx) {
     // modele entier, qui lui garde l'exigence de proximite (main proche).
     if (cibleActive() || pointDeGrabProche(p)) {
       grabIdx = idx;
-      grabAvant = capturerMatricesMonde(objetsCiblesActuels());
+      grabAvant = capturerMatricesMonde(objetsPourUndoAimant());
       ctrl.attach(c);
       grabAimante = false;
     }
@@ -2895,7 +2933,7 @@ function demarrerDragTranslateSouris(poignee, rayOrig, rayDir) {
   dragBureau = {
     type: 'translate', axeLettre: poignee.axeLettre, axeMonde: axeMonde, posDepartPivot: origineMonde,
     pointDepart: pointProcheAxe(rayOrig, rayDir, origineMonde, axeMonde),
-    objets: objetsCiblesActuels(), avant: capturerMatricesMonde(objetsCiblesActuels())
+    objets: objetsPourUndoAimant(), avant: capturerMatricesMonde(objetsPourUndoAimant())
   };
 }
 function demarrerDragRotateSouris(poignee, rayOrig, rayDir) {
@@ -2909,7 +2947,7 @@ function demarrerDragRotateSouris(poignee, rayOrig, rayDir) {
     type: 'rotate', axeLettre: poignee.axeLettre, axeMonde: axeMonde, pivotPos: pivotPos,
     vDepart: projeteSurPlan(pt.clone().sub(pivotPos), axeMonde).normalize(),
     quatDepartPivot: c.getWorldQuaternion(new THREE.Quaternion()),
-    objets: objetsCiblesActuels(), avant: capturerMatricesMonde(objetsCiblesActuels())
+    objets: objetsPourUndoAimant(), avant: capturerMatricesMonde(objetsPourUndoAimant())
   };
 }
 function demarrerDragLibreSouris(pointClic) {
@@ -2918,7 +2956,7 @@ function demarrerDragLibreSouris(pointClic) {
   dragBureau = {
     type: 'libre', plan: { point: pointClic.clone(), normale: normale },
     posDepartPivot: c.getWorldPosition(new THREE.Vector3()),
-    objets: objetsCiblesActuels(), avant: capturerMatricesMonde(objetsCiblesActuels())
+    objets: objetsPourUndoAimant(), avant: capturerMatricesMonde(objetsPourUndoAimant())
   };
 }
 function majDragBureau(rayOrig, rayDir) {
