@@ -1,4 +1,4 @@
-# Visionneuse CAO en réalité mixte — v1.15.0
+# Visionneuse CAO en réalité mixte — v1.16.0
 
 Application WebXR pour Meta Quest 3 : pose n'importe quel modèle 3D (issu
 d'une modélisation 3DEXPERIENCE) sur une vraie table, manipule-le à main
@@ -271,6 +271,61 @@ niveau sécurité :
 > (`drive-config.js` et `apps-script-photo.gs`), et que le déploiement
 > Apps Script est bien accessible à « Tout le monde ».
 
+## Écran spectateur (voir en direct sur un PC, optionnel)
+
+Depuis la v1.16.0, un PC peut **observer en direct** ce qui se passe dans le
+casque ou sur le téléphone : couleurs changées, pièces déplacées, où pointe
+le laser - le tout **en temps réel**, sans rien installer, sur la page
+**`spectateur.html`** (lien discret en bas de l'écran d'accueil).
+
+**Sens unique** : le spectateur regarde, il ne peut rien changer. C'est le
+casque/téléphone qui diffuse ; **le mode « Voir sur cet écran (souris) »
+lui-même ne diffuse jamais** (c'est un mode d'utilisation normal, pas une
+démonstration à distance).
+
+C'est **optionnel** : tant que `supabase-config.js` n'est pas rempli, tout le
+reste de l'application fonctionne exactement comme avant, sans écran
+spectateur (pas d'erreur, pas de blocage) - même principe que
+`drive-config.js`.
+
+### Configurer (2 minutes, si l'appli GMP CEC est déjà en place)
+
+Cette fonctionnalité réutilise **exactement le même service** (Supabase
+Realtime, gratuit) déjà configuré pour l'appli **VR CEC** (assemblage/déco) -
+pas besoin de créer un nouveau compte :
+
+1. Ouvre le fichier `peinture.js` **du projet VR CEC** (ou n'importe quel
+   fichier de ce projet qui contient `SB_URL`/`SB_ANON`) et repère ces 2
+   lignes :
+   ```js
+   var SB_URL  = 'https://....supabase.co';
+   var SB_ANON = 'eyJhbGciOi...';
+   ```
+2. Ouvre **`supabase-config.js`** (dans ce projet-ci, Visionneuse CAO) avec
+   le Bloc-notes, et colle ces mêmes valeurs :
+   - `url` = la valeur de `SB_URL`
+   - `anonKey` = la valeur de `SB_ANON`
+   - `canal` : laisse `'visu-cao-live'` (déjà différent des canaux de VR CEC,
+     pas de mélange possible)
+3. Republie sur GitHub Pages (voir plus bas). Ouvre `spectateur.html` sur un
+   PC, puis entre en réalité mixte (casque ou téléphone) sur un autre
+   appareil avec le même modèle : la page spectateur doit afficher « En
+   direct » et reconstruire le modèle.
+
+> Si tu n'as jamais utilisé VR CEC, crée un compte gratuit sur
+> [supabase.com](https://supabase.com/), un nouveau projet, puis dans
+> **Project Settings > API** récupère l'« URL » et la clé **anon public** -
+> ce sont les 2 valeurs à coller. Cette clé est volontairement visible dans
+> le code (comme la clé Google Drive plus haut) : c'est une clé publique
+> restreinte à la diffusion, pas un mot de passe.
+
+### Limites connues de cette v1
+
+- Un seul « acteur » affiché à la fois côté spectateur (celui qui vient
+  d'émettre) - pas de galerie multi-casques comme sur VR CEC.
+- Le spectateur a sa **propre caméra libre** (glisser/molette), ce n'est PAS
+  la vue à travers les yeux du casque.
+
 ## Publier une mise à jour en ligne (GitHub Pages)
 
 Le projet est hébergé sur **GitHub Pages**, adresse fixe
@@ -278,9 +333,9 @@ Le projet est hébergé sur **GitHub Pages**, adresse fixe
 - Dépôt : https://github.com/AntoineP3371/gmp-visu-vr (public), branche `main`
 - Pour mettre à jour le site après avoir modifié un fichier :
   `git add -A && git commit -m "..." && git push`, puis attendre ~1 minute.
-- Pense à changer le `?v=X.Y.Z` dans `index.html` (scripts `app.js` ET
-  `drive-config.js`) à chaque nouvelle version, sinon Wolvic garde
-  l'ancienne version en cache jusqu'à 10 minutes.
+- Pense à changer le `?v=X.Y.Z` dans `index.html` (scripts `app.js`,
+  `drive-config.js` ET `supabase-config.js`) à chaque nouvelle version, sinon
+  Wolvic garde l'ancienne version en cache jusqu'à 10 minutes.
 
 ## Fichiers
 
@@ -292,6 +347,9 @@ Le projet est hébergé sur **GitHub Pages**, adresse fixe
 | `modeles.json` | **Liste des modèles locaux — un fichier à modifier pour en ajouter un sans passer par Drive** |
 | `drive-config.js` | **Réglages Google Drive (clé API, dossier, URL Apps Script) — à remplir, voir plus haut** |
 | `apps-script-photo.gs` | Code à coller dans script.google.com pour l'enregistrement des photos (voir plus haut) |
+| `spectateur.html` | Écran spectateur (voir en direct sur un PC) - voir plus haut |
+| `supabase-config.js` | **Réglages de l'écran spectateur (URL + clé Supabase) — à remplir, voir plus haut** |
+| `supabase.min.js` | Bibliothèque de diffusion temps réel (vendored, ne pas modifier) |
 | `exemple-cric.glb` | Modèle de démonstration fourni avec le projet |
 | `three.min.js` / `GLTFLoader.js` | Bibliothèque 3D (vendored, ne pas modifier) |
 | `server.js` / `serveur.bat` | Serveur local + tunnel HTTPS (pour tester avec le casque) |

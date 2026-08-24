@@ -116,6 +116,9 @@
     .btn.secondaire { background: transparent; color: var(--muted); font-weight: 600; font-size: .86rem; padding: 11px 16px; }
     .btn.secondaire:hover { color: var(--text); }
 
+    .lien-spectateur { margin-top: 22px; font-size: .78rem; color: var(--muted); text-decoration: none; }
+    .lien-spectateur:hover { color: var(--primary); text-decoration: underline; }
+
     #status  { font-size: .8rem; color: var(--muted); }
     #errbox  { font-size: 11px; color: var(--danger); white-space: pre-wrap; max-width: 100%; }
     #version { margin-top: 22px; font-size: .7rem; color: var(--muted); opacity: .6; text-align: center; }
@@ -181,7 +184,8 @@
       <div id="errbox"></div>
     </div>
 
-    <div id="version">v1.15.0</div>
+    <a class="lien-spectateur" href="spectateur.html">Écran spectateur (PC) →</a>
+    <div id="version">v1.16.0</div>
   </div>
   <canvas id="c"></canvas>
 
@@ -277,6 +281,9 @@
   <script src="three.min.js"></script>
   <script src="GLTFLoader.js"></script>
   <script src="drive-config.js?v=1.12.1"></script>
-  <script src="app.js?v=1.15.0"></script>
+  <!-- Diffusion vers l'ecran spectateur (local : le reseau du Quest bloque les CDN) -->
+  <script src="supabase.min.js"></script>
+  <script src="supabase-config.js?v=1.16.0"></script>
+  <script src="app.js?v=1.16.0"></script>
 </body>
 </html>

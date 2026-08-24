@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Visionneuse CAO - ecran spectateur</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: #10161f; color: #fff; font-family: 'Segoe UI', system-ui, sans-serif;
+    display: flex; flex-direction: column; padding: 12px; gap: 10px;
+  }
+  header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  h1 { font-size: 18px; margin: 0; font-weight: 700; }
+  .etat { margin-left: auto; font-size: 13px; color: #93aab7; display: flex; align-items: center; gap: 8px; }
+  .pastille { width: 10px; height: 10px; border-radius: 50%; background: #666; flex: none; }
+  .pastille.on { background: #27ae60; }
+
+  .zone { flex: 1; position: relative; min-height: 0; background: #0d1219; border: 2px solid #294551; border-radius: 16px; overflow: hidden; }
+  .zone .titre { position: absolute; top: 0; left: 0; right: 0; z-index: 2;
+    padding: 10px 14px; font-size: 16px; font-weight: 700;
+    background: linear-gradient(#000a, #0000); }
+  .zone canvas { width: 100%; height: 100%; display: block; }
+  .zone .rien { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: #556; font-size: 15px; text-align: center; padding: 20px; }
+
+  footer { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12px; color: #778; }
+  footer a { color: #3ba7d0; }
+  footer .sep { flex: 1; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Visionneuse CAO &mdash; ecran spectateur</h1>
+  <div class="etat"><span class="pastille" id="pastille"></span><span id="etatTxt">Connexion...</span></div>
+</header>
+
+<div class="zone" id="zone">
+  <div class="titre" id="titre">En attente d'un casque ou d'un telephone actif...</div>
+  <canvas id="vue3d"></canvas>
+  <div class="rien" id="rien">Aucune session active pour l'instant.<br/>Ouvre "Entrer en realite mixte" ou "Realite augmentee sur telephone" dans un autre onglet/appareil.</div>
+</div>
+
+<footer>
+  <a href="index.html">&#8592; Retour a l'accueil</a>
+  <span class="sep"></span>
+  <span>Lecture seule : ne peut pas agir sur le modele.</span>
+</footer>
+
+<script src="three.min.js"></script>
+<script src="GLTFLoader.js"></script>
+<script src="supabase.min.js"></script>
+<script src="supabase-config.js?v=1.16.0"></script>
+<script>
+(function () {
+  'use strict';
+
+  function configValide(cle) {
+    var cfg = window.SUPABASE_CONFIG;
+    return !!(cfg && cfg[cle] && cfg[cle].indexOf('COLLE_') !== 0);
+  }
+
+  var TIMEOUT = 8000; // au-dela, la source active est consideree silencieuse
+
+  // ============================ SCENE 3D ============================
+  var canvas = document.getElementById('vue3d');
+  var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setClearColor(0x0d1219, 1);
+
+  var scene = new THREE.Scene();
+  scene.add(new THREE.AmbientLight(0xffffff, 1.4));
+  var dl = new THREE.DirectionalLight(0xffffff, 1); dl.position.set(1, 2, 1); scene.add(dl);
+  var dl2 = new THREE.DirectionalLight(0xffffff, 0.4); dl2.position.set(-1, 1, -1); scene.add(dl2);
+
+  var camera = new THREE.PerspectiveCamera(45, 1, 0.01, 20);
+  var cible = new THREE.Vector3(0, 0.12, 0);
+  var orbit = { theta: 0.7, phi: 1.15, rayon: 0.55 };
+  function placerCamera() {
+    var r = orbit.rayon, p = orbit.phi;
+    camera.position.set(
+      cible.x + r * Math.sin(p) * Math.sin(orbit.theta),
+      cible.y + r * Math.cos(p),
+      cible.z + r * Math.sin(p) * Math.cos(orbit.theta));
+    camera.lookAt(cible);
+  }
+  (function () {
+    var drag = false, lx = 0, ly = 0;
+    canvas.addEventListener('mousedown', function (e) { drag = true; lx = e.clientX; ly = e.clientY; });
+    window.addEventListener('mouseup', function () { drag = false; });
+    window.addEventListener('mousemove', function (e) {
+      if (!drag) return;
+      orbit.theta -= (e.clientX - lx) * 0.01;
+      orbit.phi = Math.max(0.2, Math.min(2.6, orbit.phi - (e.clientY - ly) * 0.01));
+      lx = e.clientX; ly = e.clientY;
+    });
+    canvas.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      orbit.rayon = Math.max(0.15, Math.min(2, orbit.rayon + e.deltaY * 0.0006));
+    }, { passive: false });
+  })();
+  function redim() {
+    var w = canvas.clientWidth || 1, h = canvas.clientHeight || 1;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h; camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', redim);
+
+  // ============================ MODELE RECONSTRUIT ============================
+  // groupeAncre reste TOUJOURS a l'identite (aucun placement AR ici, c'est
+  // un spectateur libre) - groupeModele recoit directement la matrice
+  // "modele entier" recue du reseau (deja relative a l'ancre de l'emetteur,
+  // donc utilisable telle quelle ici). racineSpectateur (le GLB charge) est
+  // ajoutee SANS recentrage : le recentrage/l'echelle de l'emetteur sont
+  // deja inclus dans ce qu'on recoit pour groupeModele.
+  var groupeAncre = new THREE.Group(); scene.add(groupeAncre);
+  var groupeModele = new THREE.Group(); groupeAncre.add(groupeModele);
+  var racineSpectateur = null;
+  var pieces = [];         // meshes coloriables, meme ordre que chargerModele()
+  var piecesMobiles = [];  // pieces de haut niveau, meme ordre que chargerModele()
+  var fichierCharge = null;
+  var chargementEnCours = false;
+
+  var loader = new THREE.GLTFLoader();
+
+  function viderModele() {
+    if (racineSpectateur) { groupeModele.remove(racineSpectateur); }
+    racineSpectateur = null; pieces = []; piecesMobiles = [];
+    groupeModele.position.set(0, 0, 0); groupeModele.quaternion.identity(); groupeModele.scale.set(1, 1, 1);
+    if (laserLigne) laserLigne.visible = false;
+    if (laserPoint) laserPoint.visible = false;
+  }
+
+  function chargerModeleSpectateur(fichier, apresChargement) {
+    if (!fichier || fichier === fichierCharge || chargementEnCours) { if (apresChargement) apresChargement(); return; }
+    chargementEnCours = true;
+    viderModele();
+    loader.load(fichier, function (gltf) {
+      var root = gltf.scene;
+      root.traverse(function (o) {
+        if (!o.isMesh) return;
+        if (Array.isArray(o.material)) o.material = o.material.map(function (m) { return m.clone(); });
+        else o.material = o.material.clone();
+        pieces.push(o);
+      });
+      var carRacine = root;
+      while (carRacine.children.length === 1) carRacine = carRacine.children[0];
+      piecesMobiles = carRacine.children.slice();
+
+      racineSpectateur = root;
+      groupeModele.add(root);
+      fichierCharge = fichier;
+      chargementEnCours = false;
+      redim();
+      if (apresChargement) apresChargement();
+    }, undefined, function () {
+      chargementEnCours = false;
+      etat(true, 'Erreur de chargement du modele : ' + fichier);
+    });
+  }
+
+  // Identique a definirMatriceMonde() de app.js : fixe la matrice LOCALE
+  // d'un objet a partir d'une matrice MONDE cible, quel que soit son parent
+  // reel actuel (fonctionne donc a n'importe quelle profondeur de groupes
+  // intermediaires dans le GLB).
+  function definirMatriceLocaleDepuisMonde(objet, matriceMonde) {
+    if (!objet.parent) return;
+    scene.updateMatrixWorld(true);
+    var local = objet.parent.matrixWorld.clone().invert().multiply(matriceMonde);
+    local.decompose(objet.position, objet.quaternion, objet.scale);
+  }
+
+  // Applique une matrice recue pour l'objet identifie par id ('m' = modele
+  // entier, sinon index dans piecesMobiles).
+  function appliquerTransform(id, m16) {
+    var mat = new THREE.Matrix4().fromArray(m16);
+    if (id === 'm') {
+      // Deja relative a l'ancre (= l'origine ici) : utilisable directement.
+      mat.decompose(groupeModele.position, groupeModele.quaternion, groupeModele.scale);
+      return;
+    }
+    var piece = piecesMobiles[id];
+    if (!piece) return;
+    // Recue relative au MODELE (racineSpectateur), pas a l'ancre : on la
+    // recompose avec la position ACTUELLE (fraiche) du modele entier.
+    scene.updateMatrixWorld(true);
+    var mondeCible = groupeModele.matrixWorld.clone().multiply(mat);
+    definirMatriceLocaleDepuisMonde(piece, mondeCible);
+  }
+
+  // Applique une liste [id,...]/[matrice,...] en garantissant que 'm' (le
+  // modele entier) est traite EN PREMIER s'il est present dans le lot - les
+  // pieces sont recomposees a partir de la position FRAICHE du modele
+  // (matriceRelativeModele cote emetteur), donc l'ordre importe.
+  function appliquerListeTransforms(idArray, matArray) {
+    var idxM = idArray.indexOf('m');
+    if (idxM !== -1) appliquerTransform('m', matArray[idxM]);
+    idArray.forEach(function (id, i) { if (id !== 'm') appliquerTransform(id, matArray[i]); });
+  }
+
+  function appliquerCouleur(pi, mi, hex) {
+    var o = pieces[pi];
+    if (!o) return;
+    var mat = Array.isArray(o.material) ? o.material[mi] : o.material;
+    if (mat) mat.color.setHex(hex);
+  }
+
+  // ============================ LASER ============================
+  var laserGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1)]);
+  var laserLigne = new THREE.Line(laserGeo, new THREE.LineBasicMaterial({ color: 0xff2222, transparent: true, opacity: 0.85 }));
+  laserLigne.visible = false;
+  groupeAncre.add(laserLigne);
+  var laserPoint = new THREE.Mesh(new THREE.SphereGeometry(0.01, 12, 12), new THREE.MeshBasicMaterial({ color: 0xff2222 }));
+  laserPoint.visible = false;
+  groupeAncre.add(laserPoint);
+  var _raycasterLaser = new THREE.Raycaster();
+
+  function appliquerLaser(o, d) {
+    if (!o || !d) { laserLigne.visible = false; laserPoint.visible = false; return; }
+    var origine = new THREE.Vector3(o[0], o[1], o[2]);
+    var direction = new THREE.Vector3(d[0], d[1], d[2]).normalize();
+    laserLigne.position.copy(origine);
+    laserLigne.lookAt(origine.clone().add(direction));
+    _raycasterLaser.set(origine, direction);
+    _raycasterLaser.far = 3;
+    var longueur = 3;
+    if (pieces.length) {
+      var hits = _raycasterLaser.intersectObjects(pieces, false);
+      if (hits.length) {
+        longueur = hits[0].distance;
+        laserPoint.position.copy(hits[0].point);
+        laserPoint.visible = true;
+      } else {
+        laserPoint.visible = false;
+      }
+    }
+    laserLigne.scale.z = longueur;
+    laserLigne.visible = true;
+  }
+  function eteindreLaser() { laserLigne.visible = false; laserPoint.visible = false; }
+
+  // ============================ SOURCE ACTIVE ============================
+  // Un seul modele affiche a la fois : celui de la source (sid) la plus
+  // recemment active. Pas de galerie multi-sources (scenario a 2 personnes) -
+  // le sid reste dans chaque message pour une extension future eventuelle.
+  var sidActif = null;
+  var dernierMessage = 0;
+  var elTitre = document.getElementById('titre');
+  var elRien = document.getElementById('rien');
+  var elCanvas = document.getElementById('vue3d');
+
+  function estActif() { return sidActif && (Date.now() - dernierMessage < TIMEOUT); }
+
+  function majAffichage(nom) {
+    if (estActif()) {
+      elRien.style.display = 'none'; elCanvas.style.display = '';
+      elTitre.textContent = 'En direct' + (nom ? ' - ' + nom : '');
+    } else {
+      elRien.style.display = 'flex'; elCanvas.style.display = 'none';
+      elTitre.textContent = "En attente d'un casque ou d'un telephone actif...";
+      eteindreLaser();
+    }
+  }
+
+  // Bascule sur une nouvelle source active : vide le modele courant, en
+  // charge un nouveau si besoin, et redemande un instantane complet (les
+  // "action"/"live" seuls ne suffiraient pas a rattraper l'etat deja en cours).
+  function prendreSource(sid, fichier, nom) {
+    var changeDeSource = sid !== sidActif;
+    sidActif = sid; dernierMessage = Date.now();
+    if (changeDeSource || fichier !== fichierCharge) {
+      chargerModeleSpectateur(fichier, function () { demanderEtat(); });
+    }
+    majAffichage(nom);
+  }
+
+  setInterval(function () { majAffichage(); }, 1000);
+
+  // ============================ CONNEXION SUPABASE ============================
+  var elPast = document.getElementById('pastille');
+  var elEtat = document.getElementById('etatTxt');
+  function etat(ok, txt) { elPast.className = 'pastille' + (ok ? ' on' : ''); elEtat.textContent = txt; }
+
+  var canal = null;
+  try {
+    if (!configValide('url') || !configValide('anonKey')) {
+      etat(false, 'supabase-config.js non rempli - voir LISEZ-MOI.md');
+    } else if (typeof supabase === 'undefined') {
+      etat(false, 'supabase.min.js absent');
+    } else {
+      var client = supabase.createClient(window.SUPABASE_CONFIG.url, window.SUPABASE_CONFIG.anonKey);
+      canal = client.channel(window.SUPABASE_CONFIG.canal || 'visu-cao-live');
+
+      canal.on('broadcast', { event: 'pres' }, function (m) {
+        var p = m.payload || {}; if (!p.sid) return;
+        prendreSource(p.sid, p.modele, p.nom);
+      });
+      canal.on('broadcast', { event: 'snap' }, function (m) {
+        var p = m.payload || {}; if (!p.sid) return;
+        prendreSourceEtAppliquerSnap(p);
+      });
+      canal.on('broadcast', { event: 'action' }, function (m) {
+        var p = m.payload || {}; if (p.sid !== sidActif) return;
+        dernierMessage = Date.now();
+        if (p.k === 'c') appliquerCouleur(p.p, p.mi, p.c);
+        else if (p.k === 'cb') (p.e || []).forEach(function (e) { appliquerCouleur(e[0], e[1], e[2]); });
+        else if (p.k === 's') groupeModele.scale.setScalar(p.v);
+        else if (p.k === 't') appliquerListeTransforms(p.obj || [], p.m || []);
+      });
+      canal.on('broadcast', { event: 'live' }, function (m) {
+        var p = m.payload || {}; if (p.sid !== sidActif) return;
+        dernierMessage = Date.now();
+        appliquerListeTransforms(p.obj || [], p.m || []);
+      });
+      canal.on('broadcast', { event: 'laser' }, function (m) {
+        var p = m.payload || {}; if (p.sid !== sidActif) return;
+        dernierMessage = Date.now();
+        if (p.off) eteindreLaser(); else appliquerLaser(p.o, p.d);
+      });
+
+      canal.subscribe(function (s) {
+        var ok = (s === 'SUBSCRIBED');
+        etat(ok, ok ? 'Connecte, en attente d\'une session active' : String(s));
+        if (ok) demanderEtat();
+      });
+    }
+  } catch (e) { etat(false, 'Erreur : ' + e.message); }
+
+  function prendreSourceEtAppliquerSnap(snap) {
+    var changeDeSource = snap.sid !== sidActif;
+    sidActif = snap.sid; dernierMessage = Date.now();
+    function appliquer() {
+      (snap.colors || []).forEach(function (c) { appliquerCouleur(c[0], c[1], c[2]); });
+      // L'echelle est deja incluse dans la matrice 'm' ci-dessous (elle
+      // decompose position+rotation+echelle du modele entier d'un coup).
+      var transforms = snap.transforms || [];
+      appliquerListeTransforms(transforms.map(function (t) { return t[0]; }), transforms.map(function (t) { return t[1]; }));
+      majAffichage(snap.nom);
+    }
+    if (changeDeSource || snap.modele !== fichierCharge) {
+      chargerModeleSpectateur(snap.modele, appliquer);
+    } else {
+      appliquer();
+    }
+  }
+
+  function demanderEtat() {
+    if (!canal) return;
+    try { canal.send({ type: 'broadcast', event: 'join', payload: { ts: Date.now() } }); } catch (e) {}
+  }
+  setInterval(function () { if (canal && !estActif()) demanderEtat(); }, 6000);
+
+  // ============================ RENDU ============================
+  majAffichage();
+  (function boucle() {
+    requestAnimationFrame(boucle);
+    if (estActif() && elCanvas.style.display !== 'none') {
+      placerCamera();
+      renderer.render(scene, camera);
+    }
+  })();
+
+})();
+</script>
+</body>
+</html>

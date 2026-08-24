@@ -195,6 +195,7 @@ var piecesMobiles     = [];    // pieces de haut niveau, deplacables independamm
 var pivotSelection    = null;  // enveloppe temporaire de la selection courante
 var carPret           = false;
 var nomModeleCourant  = '';
+var fichierModeleCourant = '';   // pour la diffusion spectateur (quel GLB charger)
 var echelleInitiale   = 1;     // facteur applique par ajusterTaille (pour le % d'echelle)
 
 // --- Reticule + repere de placement ---
@@ -255,6 +256,7 @@ function enregistrer(action) {
   if (historique.length > MAX_HISTORIQUE) historique.shift();
   refaire.length = 0;
   majPanneau();
+  diffuserAction(action, true);
 }
 
 // object.updateMatrixWorld(true) ne rafraichit que VERS LE BAS (l'objet et
@@ -305,6 +307,7 @@ function annuler() {
   refaire.push(a);
   afficherIndicateurAction('ANNULE', libelleTypeAction(a));
   majPanneau();
+  diffuserAction(a, false);
 }
 function retablir() {
   if (!refaire.length) return;
@@ -313,6 +316,7 @@ function retablir() {
   historique.push(a);
   afficherIndicateurAction('RETABLI', libelleTypeAction(a));
   majPanneau();
+  diffuserAction(a, true);
 }
 
 // ============================================================================
@@ -334,6 +338,7 @@ function capturerOrigine(obj) {
 var loader = new THREE.GLTFLoader();
 
 function chargerModele(fichier) {
+  fichierModeleCourant = fichier;
   pivot.position.set(0, 0, 0);
   pivot.quaternion.identity();
   pivot.scale.set(1, 1, 1);
@@ -1052,19 +1057,20 @@ function couleurCourante() { return PALETTE[couleurIdx]; }
 function remplirPiece(inter) {
   var o = inter.object;
   if (!o.isMesh) return;
-  var mat;
+  var mat, matIdx;
   if (Array.isArray(o.material)) {
-    var idx = (inter.face && inter.face.materialIndex) || 0;
-    if (!o.material[idx]) return;
-    mat = o.material[idx];
+    matIdx = (inter.face && inter.face.materialIndex) || 0;
+    if (!o.material[matIdx]) return;
+    mat = o.material[matIdx];
   } else {
+    matIdx = 0;
     mat = o.material;
   }
   var avant = mat.color.getHex();
   var apres = couleurCourante();
   if (avant === apres) return;
   mat.color.setHex(apres);
-  enregistrer({ type: 'couleur', mat: mat, avant: avant, apres: apres });
+  enregistrer({ type: 'couleur', mat: mat, avant: avant, apres: apres, pieceIdx: pieces.indexOf(o), matIdx: matIdx });
 }
 
 function colorierAutomatiquement() {
@@ -1072,12 +1078,13 @@ function colorierAutomatiquement() {
   pieces.forEach(function (o) { total += Array.isArray(o.material) ? o.material.length : 1; });
   var i = 0, entrees = [];
   pieces.forEach(function (o) {
+    var pieceIdx = pieces.indexOf(o);
     var mats = Array.isArray(o.material) ? o.material : [o.material];
-    mats.forEach(function (m) {
+    mats.forEach(function (m, matIdx) {
       var avant = m.color.getHex();
       var apres = new THREE.Color().setHSL(i / Math.max(total, 1), 0.65, 0.55).getHex();
       m.color.setHex(apres);
-      entrees.push({ mat: m, avant: avant, apres: apres });
+      entrees.push({ mat: m, avant: avant, apres: apres, pieceIdx: pieceIdx, matIdx: matIdx });
       i++;
     });
   });
@@ -1089,16 +1096,188 @@ function reinitialiserCouleurs() {
   pieces.forEach(function (o) {
     var orig = o.userData.couleursOrigine;
     if (!orig) return;
+    var pieceIdx = pieces.indexOf(o);
     var mats = Array.isArray(o.material) ? o.material : [o.material];
     mats.forEach(function (m, i) {
       var avant = m.color.getHex();
       var apres = orig[i];
       if (avant === apres) return;
       m.color.setHex(apres);
-      entrees.push({ mat: m, avant: avant, apres: apres });
+      entrees.push({ mat: m, avant: avant, apres: apres, pieceIdx: pieceIdx, matIdx: i });
     });
   });
   if (entrees.length) enregistrer({ type: 'couleur-lot', entrees: entrees });
+}
+
+// ============================================================================
+//  DIFFUSION TEMPS REEL (ECRAN SPECTATEUR) - optionnelle, degradation
+//  silencieuse comme drive-config.js si supabase-config.js n'est pas rempli.
+//  Diffuse les actions du casque/telephone (jamais du mode souris - ce n'est
+//  pas un emetteur, juste un mode d'utilisation normal) vers un canal
+//  Supabase Realtime en mode broadcast (pas d'ecriture en base) ;
+//  spectateur.html reconstruit le modele a partir de ces messages. Meme
+//  principe que la diffusion deja en production sur VR CEC (peinture.js /
+//  spectateur-deco.html), meme projet Supabase, canal dedie.
+// ============================================================================
+function configSupabaseValide(cle) {
+  var cfg = window.SUPABASE_CONFIG;
+  return !!(cfg && cfg[cle] && cfg[cle].indexOf('COLLE_') !== 0);
+}
+var SID = Math.random().toString(36).slice(2, 10);
+var canalLive = null;
+var diffusionPrete = false;
+
+function initDiffusion() {
+  try {
+    if (typeof supabase === 'undefined') return;
+    if (!configSupabaseValide('url') || !configSupabaseValide('anonKey')) return;
+    var client = supabase.createClient(window.SUPABASE_CONFIG.url, window.SUPABASE_CONFIG.anonKey);
+    canalLive = client.channel(window.SUPABASE_CONFIG.canal || 'visu-cao-live');
+    // Un spectateur qui arrive demande l'etat courant : on lui envoie l'instantane.
+    canalLive.on('broadcast', { event: 'join' }, function () {
+      if (carPret) diffuser('snap', construireSnap());
+    });
+    canalLive.subscribe(function (statut) { diffusionPrete = (statut === 'SUBSCRIBED'); });
+  } catch (e) { canalLive = null; diffusionPrete = false; }
+}
+function diffuser(evenement, donnees) {
+  try {
+    if (modeBureau || !canalLive || !diffusionPrete) return;
+    canalLive.send({ type: 'broadcast', event: evenement, payload: donnees });
+  } catch (e) {}
+}
+initDiffusion();
+
+// Identifiant stable d'un objet manipulable pour le protocole reseau : 'm'
+// pour le modele entier, sinon son index dans piecesMobiles. null = objet
+// non reconnu (ne devrait jamais arriver - filtre par securite a l'envoi).
+function idDeObjet(o) {
+  if (o === racineModele) return 'm';
+  var i = piecesMobiles.indexOf(o);
+  return i === -1 ? null : i;
+}
+
+// Une matrice monde brute inclut le placement AR sur la table (anchor),
+// arbitraire et sans interet pour un spectateur qui a son propre point de
+// vue en orbite libre. Meme logique que VR CEC qui diffuse ses decalques en
+// coordonnees locales a la voiture plutot qu'en coordonnees monde.
+// - Le MODELE ENTIER (racineModele) est envoye relatif a l'ANCRE : ca inclut
+//   deja tout ce qui compte (echelle+deplacement du pivot, petit decalage de
+//   centrage) - le spectateur applique cette valeur telle quelle a son noeud
+//   racine (parent = son ancre fixe a l'origine).
+// - Une PIECE est envoyee relative au MODELE (racineModele), pas a l'ancre :
+//   le spectateur la recompose avec SA PROPRE transformation du modele
+//   entier, ce qui reste correct quelle que soit la profondeur de groupes
+//   intermediaires dans le GLB entre racineModele et la piece.
+function matriceRelativeAncre(matriceMonde) {
+  scene.updateMatrixWorld(true);
+  return anchor.matrixWorld.clone().invert().multiply(matriceMonde);
+}
+function matriceRelativeModele(matriceMonde) {
+  scene.updateMatrixWorld(true);
+  return racineModele.matrixWorld.clone().invert().multiply(matriceMonde);
+}
+function matriceObjetPourReseau(o, matriceMonde) {
+  return (o === racineModele) ? matriceRelativeAncre(matriceMonde) : matriceRelativeModele(matriceMonde);
+}
+
+// Diffuse une action deja jouee localement (enregistree, annulee ou refaite) -
+// envoie toujours la valeur FINALE resultante, pas un delta : le spectateur
+// n'a donc pas besoin de savoir si c'etait un Annuler ou un Refaire.
+function diffuserAction(a, versApres) {
+  if (a.type === 'transform') {
+    var mats = versApres ? a.apres : a.avant;
+    var obj = [], m = [];
+    a.objets.forEach(function (o, i) {
+      var id = idDeObjet(o);
+      if (id === null) return;
+      obj.push(id); m.push(matriceObjetPourReseau(o, mats[i]).toArray());
+    });
+    if (obj.length) diffuser('action', { sid: SID, k: 't', obj: obj, m: m });
+  } else if (a.type === 'echelle') {
+    diffuser('action', { sid: SID, k: 's', v: versApres ? a.apres : a.avant });
+  } else if (a.type === 'couleur') {
+    diffuser('action', { sid: SID, k: 'c', p: a.pieceIdx, mi: a.matIdx, c: versApres ? a.apres : a.avant });
+  } else if (a.type === 'couleur-lot') {
+    diffuser('action', { sid: SID, k: 'cb', e: a.entrees.map(function (e) {
+      return [e.pieceIdx, e.matIdx, versApres ? e.apres : e.avant];
+    }) });
+  }
+}
+
+// Etat complet courant (pas l'historique) - envoye a un spectateur qui vient
+// d'arriver, pour qu'il affiche directement ou en est le modele.
+function construireSnap() {
+  var colors = [];
+  pieces.forEach(function (o, pi) {
+    var mats = Array.isArray(o.material) ? o.material : [o.material];
+    mats.forEach(function (m, mi) { colors.push([pi, mi, m.color.getHex()]); });
+  });
+  var transforms = [];
+  scene.updateMatrixWorld(true);
+  if (racineModele) transforms.push(['m', matriceRelativeAncre(racineModele.matrixWorld).toArray()]);
+  piecesMobiles.forEach(function (o, i) { transforms.push([i, matriceRelativeModele(o.matrixWorld).toArray()]); });
+  return {
+    sid: SID, modele: fichierModeleCourant, nom: nomModeleCourant,
+    colors: colors, transforms: transforms, echelle: pivot.scale.x
+  };
+}
+
+// Pose en direct de l'objet en cours de manipulation (gizmo precis ou main
+// libre), en plus de la diffusion "action" a la fin du geste - throttle a
+// ~10 Hz pour un rendu fluide cote spectateur sans saturer le reseau.
+var dernierePoseLiveEnvoi = 0;
+function diffuserPoseLiveSiActif(t) {
+  if (!dragEtat && grabIdx === -1) return;
+  if (t - dernierePoseLiveEnvoi < 90) return;
+  dernierePoseLiveEnvoi = t;
+  var objets = objetsCiblesActuels();
+  if (!objets.length) return;
+  var mats = capturerMatricesMonde(objets);
+  var obj = [], m = [];
+  objets.forEach(function (o, i) {
+    var id = idDeObjet(o);
+    if (id === null) return;
+    obj.push(id); m.push(matriceObjetPourReseau(o, mats[i]).toArray());
+  });
+  if (obj.length) diffuser('live', { sid: SID, obj: obj, m: m });
+}
+
+// Presence legere (~1 Hz) - signale au spectateur que le casque/telephone est
+// actif ET quel modele charger (plusieurs modeles possibles ici, contrairement
+// a la voiture unique de VR CEC).
+var dernierePresEnvoi = 0;
+function diffuserPresenceSiActif(t) {
+  if (!carPret) return;
+  if (t - dernierePresEnvoi < 1000) return;
+  dernierePresEnvoi = t;
+  diffuser('pres', { sid: SID, modele: fichierModeleCourant, nom: nomModeleCourant });
+}
+
+// Etat du laser d'une manette (origine + direction du rayon) - diffuse tant
+// que la gachette est tenue, throttle a ~14 Hz ; un message "off" au
+// relachement pour que le spectateur l'eteigne (sinon il resterait affiche
+// indefiniment a sa derniere position).
+var dernierLaserEnvoi = [0, 0];
+var laserEtaitDiffuse = [false, false];
+function diffuserLaserEtat(idx, ray) {
+  if (ray) {
+    var t = performance.now();
+    if (t - dernierLaserEnvoi[idx] < 70) return;
+    dernierLaserEnvoi[idx] = t;
+    laserEtaitDiffuse[idx] = true;
+    // Origine/direction converties dans le repere de l'ancre (meme raison que
+    // matriceRelativeAncre : la position physique dans la piece n'a aucun sens
+    // pour le spectateur, qui a sa propre camera libre).
+    scene.updateMatrixWorld(true);
+    var qAncreInv = anchor.getWorldQuaternion(new THREE.Quaternion()).invert();
+    var oLocal = anchor.worldToLocal(ray.ray.origin.clone());
+    var dLocal = ray.ray.direction.clone().applyQuaternion(qAncreInv);
+    diffuser('laser', { sid: SID, o: oLocal.toArray(), d: dLocal.toArray() });
+  } else if (laserEtaitDiffuse[idx]) {
+    laserEtaitDiffuse[idx] = false;
+    diffuser('laser', { sid: SID, off: true });
+  }
 }
 
 // ============================================================================
@@ -1974,9 +2153,11 @@ function majLaser(idx) {
     laser.visible = false; point.visible = false;
     appliquerSurvolPiece(idx, null);
     appliquerSurvolObjet(idx, null);
+    diffuserLaserEtat(idx, null);
     return;
   }
   var ray = rayonDe(ctrl);
+  diffuserLaserEtat(idx, selectTenu[idx] ? ray : null);
 
   // Cibles pointables : les pieces + les poignees/RAZ du gizmo actuellement
   // affiche (sinon impossible de survoler un bouton RAZ avant de cliquer).
@@ -2168,6 +2349,8 @@ renderer.setAnimationLoop(function (time, frame) {
 
   if (modeZoom) majZoom();
   if (dragEtat) { if (dragEtat.mode === 'translate') majDragTranslate(); else majDragRotate(); }
+  diffuserPoseLiveSiActif(time);
+  diffuserPresenceSiActif(time);
   if (flashPhoto.material.opacity > 0) majFlash();
   if (mesureActiveId != null) {
     // Une piece a pu bouger juste au-dessus (grip, zoom, glissement gizmo) :
