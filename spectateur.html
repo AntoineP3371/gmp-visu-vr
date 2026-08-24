@@ -261,7 +261,7 @@
   var laserLigne = new THREE.Line(laserGeo, new THREE.LineBasicMaterial({ color: 0xff2222, transparent: true, opacity: 0.85 }));
   laserLigne.visible = false;
   groupeAncre.add(laserLigne);
-  var laserPoint = new THREE.Mesh(new THREE.SphereGeometry(0.01, 12, 12), new THREE.MeshBasicMaterial({ color: 0xff2222 }));
+  var laserPoint = new THREE.Mesh(new THREE.SphereGeometry(0.0033, 12, 12), new THREE.MeshBasicMaterial({ color: 0xff2222 }));
   laserPoint.visible = false;
   groupeAncre.add(laserPoint);
   var _raycasterLaser = new THREE.Raycaster();

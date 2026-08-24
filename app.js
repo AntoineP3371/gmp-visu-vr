@@ -737,6 +737,7 @@ function majAimantGrab() {
       return;
     }
     definirMatriceMonde(c, origineMonde);
+    fantomeGroupe.visible = false;
     return;
   }
 
@@ -758,6 +759,7 @@ function majAimantGrab() {
     grabPosControleurAimant = posControleur;
     definirMatriceMonde(c, origineMonde);
     vibrerManette(ctrl, 0.6, 60);
+    fantomeGroupe.visible = false;
   }
 }
 
@@ -846,16 +848,25 @@ function viderFantome() {
   while (fantomeGroupe.children.length) fantomeGroupe.remove(fantomeGroupe.children[0]);
   fantomeGroupe.visible = false;
 }
-// Clone les meshes de "objets" (geometrie partagee, pas clonee) pour
-// previsualiser leur position d'ORIGINE - meme convention de clonage que le
-// chargement du modele (un materiau independant par mesh), mais un seul
-// materiau translucide partage ici puisque c'est juste un aperçu.
-function construireFantome(objets) {
+// Clone les meshes de "objets" (geometrie partagee, pas clonee) en conservant
+// leur position RELATIVE A "c" (la cible en cours de deplacement) - sinon
+// chaque clone atterrit a l'origine du groupe fantome et perd son decalage
+// interne (bug reel trouve au test casque : le fantome "apparaissait
+// n'importe ou" des qu'une piece/un groupe contenait plus d'un mesh, ce qui
+// est le cas courant). fantomeGroupe est ensuite positionne a la pose MONDE
+// d'origine par positionnerFantome(), donc l'agencement relatif calcule ici
+// se retrouve reconstitue a la bonne place.
+function construireFantome(c, objets) {
   viderFantome();
+  scene.updateMatrixWorld(true);
+  var inverseCible = c.matrixWorld.clone().invert();
   objets.forEach(function (o) {
     o.traverse(function (m) {
       if (!m.isMesh) return;
-      fantomeGroupe.add(new THREE.Mesh(m.geometry, matFantome));
+      var clone = new THREE.Mesh(m.geometry, matFantome);
+      clone.matrix.copy(inverseCible).multiply(m.matrixWorld);
+      clone.matrix.decompose(clone.position, clone.quaternion, clone.scale);
+      fantomeGroupe.add(clone);
     });
   });
 }
@@ -887,7 +898,7 @@ function verifierAimantAxe(c, axeLettre, mode, ctrl) {
       fantomeGroupe.visible = true;
     } else { viderFantome(); }
     aimante = ecart < SEUIL_AIMANT_POS;
-    if (aimante) c.position[axeLettre] = c.userData.origine.pos[axeLettre];
+    if (aimante) { c.position[axeLettre] = c.userData.origine.pos[axeLettre]; fantomeGroupe.visible = false; }
   } else {
     var eActuel  = new THREE.Euler().setFromQuaternion(c.quaternion, 'XYZ');
     var eOrigine = new THREE.Euler().setFromQuaternion(c.userData.origine.quat, 'XYZ');
@@ -902,7 +913,7 @@ function verifierAimantAxe(c, axeLettre, mode, ctrl) {
       fantomeGroupe.visible = true;
     } else { viderFantome(); }
     aimante = ecartRot < SEUIL_AIMANT_ROT;
-    if (aimante) { eActuel[axeLettre] = eOrigine[axeLettre]; c.quaternion.setFromEuler(eActuel); }
+    if (aimante) { eActuel[axeLettre] = eOrigine[axeLettre]; c.quaternion.setFromEuler(eActuel); fantomeGroupe.visible = false; }
   }
   return aimante;
 }
@@ -910,7 +921,7 @@ var _dernierAimantAxe = null; // objet actuellement previsualise, pour ne recons
 function construireFantomeSiBesoin(c) {
   if (_dernierAimantAxe === c && fantomeGroupe.children.length) return;
   _dernierAimantAxe = c;
-  construireFantome(objetsCiblesActuels());
+  construireFantome(c, objetsCiblesActuels());
 }
 
 // Glisser libre a la souris (Ctrl+glisser, mode 'libre' de majDragBureau) :
@@ -928,7 +939,7 @@ function verifierAimantLibreSouris(c) {
       c.getWorldQuaternion(new THREE.Quaternion()), new THREE.Vector3(1, 1, 1)));
     fantomeGroupe.visible = true;
   } else { viderFantome(); }
-  if (ecart < SEUIL_AIMANT_POS) c.position.copy(c.userData.origine.pos);
+  if (ecart < SEUIL_AIMANT_POS) { c.position.copy(c.userData.origine.pos); fantomeGroupe.visible = false; }
 }
 
 function majZoom() {
@@ -2496,7 +2507,7 @@ controllers.forEach(function (ctrl, idx) {
   ctrl.add(laser);
   ctrl.userData.laser = laser;
   var pointeurLaser = new THREE.Mesh(
-    new THREE.SphereGeometry(0.008, 12, 12),
+    new THREE.SphereGeometry(0.0027, 12, 12),
     new THREE.MeshBasicMaterial({ color: 0xff2222, depthTest: false })
   );
   pointeurLaser.renderOrder = 998;

@@ -1,4 +1,4 @@
-# Visionneuse CAO en réalité mixte — v1.18.0
+# Visionneuse CAO en réalité mixte — v1.18.1
 
 Application WebXR pour Meta Quest 3 : pose n'importe quel modèle 3D (issu
 d'une modélisation 3DEXPERIENCE) sur une vraie table, manipule-le à main
