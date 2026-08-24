@@ -568,6 +568,7 @@ function desactiverSelectionAB() {
   surlignerSelection();
   relacherSelection();
   dragEtat = null;
+  viderFantome();
   majPanneau();
 }
 // Retour explicite a "tout le modele" : desselectionne ET repasse en
@@ -679,6 +680,8 @@ function resetAxeRotation(lettre) {
 var SEUIL_MARGE = 0.15;   // marge de tolerance autour de la boite englobante
 var grabIdx   = -1;
 var grabAvant = null;
+var grabAimante = false;             // aimantee a sa position d'origine pendant le grip ?
+var grabPosControleurAimant = null;  // position manette au moment de l'accrochage (pour se detacher)
 
 function pointDeGrabProche(posControleur) {
   var objets = objetsCiblesActuels();
@@ -703,6 +706,59 @@ function terminerGrab() {
   }
   grabIdx = -1;
   grabAvant = null;
+  grabAimante = false;
+  viderFantome();
+}
+
+// Aimantation en pleine prise (grip VR/telephone) : contrairement au gizmo,
+// l'objet saisi est un enfant du CONTROLEUR (ctrl.attach) - rien ne le
+// repositionne par frame de lui-meme, donc une fois aimante il faut le
+// reposer explicitement chaque frame (sinon il derive avec le controleur),
+// et suivre le deplacement du controleur DEPUIS l'accrochage pour savoir
+// quand se detacher (un simple ecart a l'origine ne marche plus une fois
+// pose exactement dessus). Appelee chaque frame depuis la boucle de rendu
+// tant que grabIdx !== -1.
+function majAimantGrab() {
+  if (grabIdx === -1) return;
+  var c = cibleCourante();
+  if (!c || !c.userData.origine) { grabAimante = false; viderFantome(); return; }
+  var ctrl = controllers[grabIdx];
+  var parentLogique = parentLogiqueCible(); // anchor ou pivot - jamais le controleur
+  scene.updateMatrixWorld(true);
+  var origineMonde = parentLogique.matrixWorld.clone().multiply(
+    new THREE.Matrix4().compose(c.userData.origine.pos, c.userData.origine.quat, new THREE.Vector3(1, 1, 1)));
+  var posOrigine = new THREE.Vector3(); var quatOrigine = new THREE.Quaternion(); var _s = new THREE.Vector3();
+  origineMonde.decompose(posOrigine, quatOrigine, _s);
+  var posControleur = ctrl.getWorldPosition(new THREE.Vector3());
+
+  if (grabAimante) {
+    if (posControleur.distanceTo(grabPosControleurAimant) > SEUIL_DETACHE_GRAB) {
+      grabAimante = false;
+      return;
+    }
+    definirMatriceMonde(c, origineMonde);
+    return;
+  }
+
+  var posActuelle = c.getWorldPosition(new THREE.Vector3());
+  var quatActuelle = c.getWorldQuaternion(new THREE.Quaternion());
+  var distPos = posActuelle.distanceTo(posOrigine);
+  var distRot = quatActuelle.angleTo(quatOrigine);
+
+  if (distPos < SEUIL_INDICE_POS && distRot < SEUIL_INDICE_ROT) {
+    construireFantomeSiBesoin(c);
+    positionnerFantome(origineMonde);
+    fantomeGroupe.visible = true;
+  } else {
+    viderFantome();
+  }
+
+  if (distPos < SEUIL_AIMANT_POS && distRot < SEUIL_AIMANT_ROT) {
+    grabAimante = true;
+    grabPosControleurAimant = posControleur;
+    definirMatriceMonde(c, origineMonde);
+    vibrerManette(ctrl, 0.6, 60);
+  }
 }
 
 // ============================================================================
@@ -760,6 +816,119 @@ function magnetiserEchelle(scaleBrut) {
     }
   }
   return scaleBrut;
+}
+
+// ============================================================================
+//  AIMANTATION AU RETOUR A L'ORIGINE - meme donnee/semantique que les
+//  boutons RAZ (resetTout/resetAxeTranslation/...) : "userData.origine" de
+//  la cible courante, juste declenchee par la proximite pendant un geste au
+//  lieu d'un clic. Fantome semi-transparent en aperçu, vibration manette a
+//  l'accrochage (silencieuse si absente : telephone/souris).
+// ============================================================================
+var SEUIL_INDICE_POS = 0.035;   // 3.5 cm : le fantome apparait
+var SEUIL_AIMANT_POS = 0.012;   // 1.2 cm : aimantation (position)
+var SEUIL_INDICE_ROT = 0.26;    // ~15 deg : le fantome apparait (rotation)
+var SEUIL_AIMANT_ROT = 0.09;    // ~5 deg : aimantation (rotation)
+var SEUIL_DETACHE_GRAB = 0.05;  // 5 cm de mouvement manette pour se detacher une fois aimante
+
+function vibrerManette(ctrl, intensite, dureeMs) {
+  try {
+    var gp = ctrl && ctrl.userData.src && ctrl.userData.src.gamepad;
+    var act = gp && gp.hapticActuators && gp.hapticActuators[0];
+    if (act && act.pulse) act.pulse(intensite, dureeMs);
+  } catch (e) {}
+}
+
+var fantomeGroupe = new THREE.Group(); fantomeGroupe.visible = false; scene.add(fantomeGroupe);
+var matFantome = new THREE.MeshBasicMaterial({ color: 0x2f8fd6, transparent: true, opacity: 0.35, depthWrite: false });
+
+function viderFantome() {
+  while (fantomeGroupe.children.length) fantomeGroupe.remove(fantomeGroupe.children[0]);
+  fantomeGroupe.visible = false;
+}
+// Clone les meshes de "objets" (geometrie partagee, pas clonee) pour
+// previsualiser leur position d'ORIGINE - meme convention de clonage que le
+// chargement du modele (un materiau independant par mesh), mais un seul
+// materiau translucide partage ici puisque c'est juste un aperçu.
+function construireFantome(objets) {
+  viderFantome();
+  objets.forEach(function (o) {
+    o.traverse(function (m) {
+      if (!m.isMesh) return;
+      fantomeGroupe.add(new THREE.Mesh(m.geometry, matFantome));
+    });
+  });
+}
+// Positionne le groupe fantome (deja construit) a une matrice MONDE donnee -
+// puisque ses enfants sont ajoutes sans transformation propre, positionner
+// fantomeGroupe suffit a positionner tous les clones ensemble.
+function positionnerFantome(matriceMonde) {
+  if (!fantomeGroupe.parent) return;
+  var local = fantomeGroupe.parent.matrixWorld.clone().invert().multiply(matriceMonde);
+  local.decompose(fantomeGroupe.position, fantomeGroupe.quaternion, fantomeGroupe.scale);
+}
+
+// Verifie/applique l'aimantation sur UN SEUL axe (gizmo precis, VR et
+// souris) - reprend exactement le calcul de resetAxeTranslation/
+// resetAxeRotation, juste applique en continu pendant le glissement plutot
+// qu'au clic. Retourne true si aimante sur cet appel (pour la vibration,
+// declenchee par l'appelant au front montant uniquement).
+function verifierAimantAxe(c, axeLettre, mode, ctrl) {
+  if (!c.userData.origine) { viderFantome(); return false; }
+  var aimante;
+  if (mode === 'translate') {
+    var ecart = Math.abs(c.position[axeLettre] - c.userData.origine.pos[axeLettre]);
+    if (ecart < SEUIL_INDICE_POS) {
+      construireFantomeSiBesoin(c);
+      var posFantome = c.position.clone(); posFantome[axeLettre] = c.userData.origine.pos[axeLettre];
+      positionnerFantome(new THREE.Matrix4().compose(
+        c.parent.localToWorld(posFantome.clone()),
+        c.getWorldQuaternion(new THREE.Quaternion()), new THREE.Vector3(1, 1, 1)));
+      fantomeGroupe.visible = true;
+    } else { viderFantome(); }
+    aimante = ecart < SEUIL_AIMANT_POS;
+    if (aimante) c.position[axeLettre] = c.userData.origine.pos[axeLettre];
+  } else {
+    var eActuel  = new THREE.Euler().setFromQuaternion(c.quaternion, 'XYZ');
+    var eOrigine = new THREE.Euler().setFromQuaternion(c.userData.origine.quat, 'XYZ');
+    var ecartRot = Math.abs(eActuel[axeLettre] - eOrigine[axeLettre]);
+    if (ecartRot < SEUIL_INDICE_ROT) {
+      construireFantomeSiBesoin(c);
+      var eFantome = eActuel.clone(); eFantome[axeLettre] = eOrigine[axeLettre];
+      positionnerFantome(new THREE.Matrix4().compose(
+        c.getWorldPosition(new THREE.Vector3()),
+        c.parent.getWorldQuaternion(new THREE.Quaternion()).multiply(new THREE.Quaternion().setFromEuler(eFantome)),
+        new THREE.Vector3(1, 1, 1)));
+      fantomeGroupe.visible = true;
+    } else { viderFantome(); }
+    aimante = ecartRot < SEUIL_AIMANT_ROT;
+    if (aimante) { eActuel[axeLettre] = eOrigine[axeLettre]; c.quaternion.setFromEuler(eActuel); }
+  }
+  return aimante;
+}
+var _dernierAimantAxe = null; // objet actuellement previsualise, pour ne reconstruire le fantome que si besoin
+function construireFantomeSiBesoin(c) {
+  if (_dernierAimantAxe === c && fantomeGroupe.children.length) return;
+  _dernierAimantAxe = c;
+  construireFantome(objetsCiblesActuels());
+}
+
+// Glisser libre a la souris (Ctrl+glisser, mode 'libre' de majDragBureau) :
+// position complete (jamais de rotation dans ce mode), pas de manette donc
+// pas de vibration. Le detachement est automatique ici (contrairement au
+// grip VR) puisque majDragBureau recalcule la position brute a partir du
+// rayon souris a chaque appel - s'eloigner suffit a ne plus etre aimante.
+function verifierAimantLibreSouris(c) {
+  if (!c.userData.origine) { viderFantome(); return; }
+  var ecart = c.position.distanceTo(c.userData.origine.pos);
+  if (ecart < SEUIL_INDICE_POS) {
+    construireFantomeSiBesoin(c);
+    positionnerFantome(new THREE.Matrix4().compose(
+      c.parent.localToWorld(c.userData.origine.pos.clone()),
+      c.getWorldQuaternion(new THREE.Quaternion()), new THREE.Vector3(1, 1, 1)));
+    fantomeGroupe.visible = true;
+  } else { viderFantome(); }
+  if (ecart < SEUIL_AIMANT_POS) c.position.copy(c.userData.origine.pos);
 }
 
 function majZoom() {
@@ -1012,6 +1181,9 @@ function majDragTranslate() {
   var deplacement = axeMonde.multiplyScalar(delta.dot(axeMonde));
   var nouveauMonde = dragEtat.posDepartPivot.clone().add(deplacement);
   c.position.copy(c.parent.worldToLocal(nouveauMonde));
+  var aimante = verifierAimantAxe(c, dragEtat.axeLettre, 'translate', controllers[dragEtat.idx]);
+  if (aimante && !dragEtat.aimante) vibrerManette(controllers[dragEtat.idx], 0.6, 60);
+  dragEtat.aimante = aimante;
 }
 
 function demarrerDragRotate(idx, poignee) {
@@ -1046,6 +1218,9 @@ function majDragRotate() {
   var qParentInv = new THREE.Quaternion();
   c.parent.getWorldQuaternion(qParentInv).invert();
   c.quaternion.copy(qParentInv.multiply(qCible));
+  var aimante = verifierAimantAxe(c, dragEtat.axeLettre, 'rotate', controllers[dragEtat.idx]);
+  if (aimante && !dragEtat.aimante) vibrerManette(controllers[dragEtat.idx], 0.6, 60);
+  dragEtat.aimante = aimante;
 }
 
 // ============================================================================
@@ -1309,6 +1484,7 @@ var mode = MODE.LIBRE;
 function definirMode(m) {
   mode = m;
   dragEtat = null;
+  viderFantome();
   majPanneau();
 }
 
@@ -2368,6 +2544,7 @@ controllers.forEach(function (ctrl, idx) {
       grabIdx = idx;
       grabAvant = capturerMatricesMonde(objetsCiblesActuels());
       ctrl.attach(c);
+      grabAimante = false;
     }
   });
   ctrl.addEventListener('squeezeend', function () {
@@ -2388,6 +2565,7 @@ controllers.forEach(function (ctrl, idx) {
       var apres = capturerMatricesMonde(dragEtat.objets);
       enregistrerTransformSiChange(dragEtat.objets, dragEtat.avant, apres);
       dragEtat = null;
+      viderFantome();
     }
   });
 });
@@ -2461,6 +2639,7 @@ renderer.setAnimationLoop(function (time, frame) {
 
   if (modeZoom) majZoom();
   if (dragEtat) { if (dragEtat.mode === 'translate') majDragTranslate(); else majDragRotate(); }
+  if (grabIdx !== -1) majAimantGrab();
   diffuserPoseLiveSiActif(time);
   diffuserPresenceSiActif(time);
   diffuserTeteSiActif(time);
@@ -2737,6 +2916,7 @@ function majDragBureau(rayOrig, rayDir) {
     var pt1 = pointProcheAxe(rayOrig, rayDir, dragBureau.posDepartPivot, dragBureau.axeMonde);
     var delta1 = pt1.clone().sub(dragBureau.pointDepart);
     c.position.copy(c.parent.worldToLocal(dragBureau.posDepartPivot.clone().add(delta1)));
+    verifierAimantAxe(c, dragBureau.axeLettre, 'translate', null);
   } else if (dragBureau.type === 'rotate') {
     var pt2 = pointSurPlan(rayOrig, rayDir, dragBureau.pivotPos, dragBureau.axeMonde);
     if (!pt2) return;
@@ -2746,11 +2926,13 @@ function majDragBureau(rayOrig, rayDir) {
     var qCible = qDelta.multiply(dragBureau.quatDepartPivot);
     var qParentInv = new THREE.Quaternion(); c.parent.getWorldQuaternion(qParentInv).invert();
     c.quaternion.copy(qParentInv.multiply(qCible));
+    verifierAimantAxe(c, dragBureau.axeLettre, 'rotate', null);
   } else {
     var pt3 = pointSurPlan(rayOrig, rayDir, dragBureau.plan.point, dragBureau.plan.normale);
     if (!pt3) return;
     var delta3 = pt3.clone().sub(dragBureau.plan.point);
     c.position.copy(c.parent.worldToLocal(dragBureau.posDepartPivot.clone().add(delta3)));
+    verifierAimantLibreSouris(c);
   }
 }
 function terminerDragBureau() {
@@ -2758,6 +2940,7 @@ function terminerDragBureau() {
   var apres = capturerMatricesMonde(dragBureau.objets);
   enregistrerTransformSiChange(dragBureau.objets, dragBureau.avant, apres);
   dragBureau = null;
+  viderFantome();
 }
 
 canvas.addEventListener('mousedown', function (evt) {
@@ -2973,11 +3156,11 @@ function majBarreBureau() {
   // La barre est partagee entre le mode souris (aide = gestes souris) et le
   // mode telephone (aide = gestes tactiles) - meme structure, texte adapte.
   document.getElementById('aideLibre').textContent = modeTelephone
-    ? 'Tapoter et glisser sur le modele : le deplacer a main levee'
-    : 'Glisser = orbiter · Molette = zoom vue · Clic molette = translater la vue · Maj+clic = choisir une piece · Ctrl+glisser = deplacer la cible';
+    ? 'Tapoter et glisser sur le modele : le deplacer a main levee (s\'aimante pres de sa position d\'origine)'
+    : 'Glisser = orbiter · Molette = zoom vue · Clic molette = translater la vue · Maj+clic = choisir une piece · Ctrl+glisser = deplacer la cible (s\'aimante pres de l\'origine)';
   document.getElementById('aidePrecision').textContent = modeTelephone
-    ? 'Tapoter + glisser sur une fleche/anneau'
-    : 'Ctrl+glisser sur une fleche/anneau';
+    ? 'Tapoter + glisser sur une fleche/anneau (s\'aimante pres de l\'origine)'
+    : 'Ctrl+glisser sur une fleche/anneau (s\'aimante pres de l\'origine)';
   document.getElementById('aideMesure').textContent = modeTelephone
     ? 'Tapoter un 1er point, puis un 2eme : distance reelle affichee (mm)'
     : 'Ctrl+clic sur un 1er point, puis un 2eme : distance reelle affichee (mm)';

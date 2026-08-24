@@ -1,4 +1,4 @@
-# Visionneuse CAO en réalité mixte — v1.17.0
+# Visionneuse CAO en réalité mixte — v1.18.0
 
 Application WebXR pour Meta Quest 3 : pose n'importe quel modèle 3D (issu
 d'une modélisation 3DEXPERIENCE) sur une vraie table, manipule-le à main
@@ -62,6 +62,7 @@ gâchette.
 | **Zoomer** (avant/arrière, sur tout le modèle) | Maintiens le **grip des 2 manettes en même temps** - le % s'affiche en direct entre les 2 mains, et « s'aimante » sur 50/75/100/125/150/200% |
 | **Montrer/pointer quelque chose** | Maintiens la **gâchette appuyée** : un laser rouge s'arrête sur la pièce visée |
 | Translater / tourner précisément (menu Déplacements > Précis) | Vise une flèche ou un anneau, maintiens la **gâchette**, bouge la main, relâche - la valeur (m / degrés) reste affichée en permanence dans sa case, **du même code couleur que l'axe** (fonctionne aussi sur un groupe de pièces sélectionné) |
+| **Remettre UNE pièce/un groupe à sa place en la déplaçant** (à la main ou au gizmo) | En s'approchant de sa position d'origine, un **aperçu fantôme bleu translucide** apparaît à cet endroit ; encore plus proche, la pièce **s'aimante** dessus (petite **vibration** dans la manette) et se verrouille pile. En pleine main, tirer franchement dessus la détache pour continuer à la déplacer normalement |
 | Remettre UN axe à zéro | Vise le petit bouton rouge **« RAZ »** (superposé, en léger premier plan, sur le coin de la case de valeur), **gâchette** |
 | **RAZ générale** (menu Déplacements) | Remet le modèle ENTIER à sa position d'origine, **y compris les pièces déjà déplacées individuellement ou en groupe** |
 | Déplacer le centre de rotation | Vise un point du modèle (hors flèche/anneau), **gâchette** |
@@ -109,6 +110,12 @@ sans avoir le Quest sous la main.
 | Choisir une/des pièce(s) | **Maj + clic** sur une pièce (reclic = désélectionne) |
 | Déplacer la cible / utiliser le gizmo / peindre / mesurer | **Ctrl + glisser** ou **Ctrl + clic** (selon l'onglet actif) |
 | Tout le reste (onglets MAIN LIBRE/PRÉCISION/COULEUR/MESURES/CAPTURE, RAZ, RAZ GÉNÉRALE, palette, annuler/refaire, % d'échelle, fond de capture) | Barre d'outils en haut de l'écran |
+
+> 💡 **Aimantation au retour à l'origine** : en ramenant une pièce ou un
+> groupe déplacé près de sa position de départ (au gizmo ou en glisser
+> libre), un aperçu fantôme bleu translucide apparaît puis la pièce s'y
+> aimante et se verrouille pile - pas de vibration en mode souris (pas de
+> manette), juste le fantôme et le verrouillage visuel.
 
 ## Utilisation sur téléphone (réalité augmentée, Android uniquement)
 
