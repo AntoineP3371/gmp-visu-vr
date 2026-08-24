@@ -1731,29 +1731,29 @@ function capturerPhoto() {
 //  Arborescence figee ici, une seule fois (dessin ET clic la relisent).
 // ============================================================================
 var MENU_RACINE = [
-  { label: 'Couleurs', sub: [
-      { label: 'Automatique', action: colorierAutomatiquement },
-      { label: 'Manuel', action: function () { definirMode(MODE.COULEUR); }, couleurs: true },
-      { label: 'RAZ', action: reinitialiserCouleurs }
+  { label: 'Couleurs', icone: 'palette', sub: [
+      { label: 'Automatique', icone: 'pinceau', action: colorierAutomatiquement },
+      { label: 'Manuel', icone: 'pinceau', action: function () { definirMode(MODE.COULEUR); }, couleurs: true },
+      { label: 'RAZ', icone: 'reset', action: reinitialiserCouleurs }
   ] },
-  { label: 'Deplacements', sub: [
-      { label: 'Libre', action: revenirLibre },
-      { label: 'Precis', sub: [
-          { label: 'Translation', action: function () { definirMode(MODE.GIZMO_T); } },
-          { label: 'Rotation',    action: function () { definirMode(MODE.GIZMO_R); } }
+  { label: 'Deplacements', icone: 'deplacer', sub: [
+      { label: 'Libre', icone: 'deplacer', action: revenirLibre },
+      { label: 'Precis', icone: 'cible', sub: [
+          { label: 'Translation', icone: 'flechedouble', action: function () { definirMode(MODE.GIZMO_T); } },
+          { label: 'Rotation',    icone: 'reset',        action: function () { definirMode(MODE.GIZMO_R); } }
       ] },
-      { label: 'RAZ generale', texte: 'RAZ tout', action: razGenerale }
+      { label: 'RAZ generale', texte: 'RAZ tout', icone: 'reset', action: razGenerale }
   ] },
-  { label: 'Mesures', texte: 'Mesures', action: function () { definirMode(MODE.MESURE); }, mesures: true },
-  { label: 'Annuler / Refaire / Quitter / Remettre', texte: 'Actions', sub: [
-      { label: 'Annuler', action: annuler },
-      { label: 'Refaire', action: retablir },
-      { label: 'Quitter', action: quitterAR },
-      { label: 'Remettre sur la table', texte: 'Remettre', action: replacer }
+  { label: 'Mesures', texte: 'Mesures', icone: 'regle', action: function () { definirMode(MODE.MESURE); }, mesures: true },
+  { label: 'Annuler / Refaire / Quitter / Remettre', texte: 'Actions', icone: 'undo', sub: [
+      { label: 'Annuler', icone: 'undo', action: annuler },
+      { label: 'Refaire', icone: 'redo', action: retablir },
+      { label: 'Quitter', icone: 'porte', action: quitterAR },
+      { label: 'Remettre sur la table', texte: 'Remettre', icone: 'table', action: replacer }
   ] },
-  { label: "Capture d'affichage", texte: 'Capture', sub: [
-      { label: 'Cadre', action: entrerModePhoto },
-      { label: 'Fond', sub: [
+  { label: "Capture d'affichage", texte: 'Capture', icone: 'camera', sub: [
+      { label: 'Cadre', icone: 'camera', action: entrerModePhoto },
+      { label: 'Fond', icone: 'image', sub: [
           { label: 'Realite virtuelle',  texte: 'Bleu GMP', action: function () { fondCapture = 'vr'; } },
           { label: 'Realite augmentee',  texte: 'Reel (AR)', action: function () { fondCapture = 'ar'; } }
       ] }
@@ -1847,6 +1847,92 @@ function estActifRoue(node) {
 }
 function cerclePlein(x, y, r) { rctx.beginPath(); rctx.arc(x, y, r, 0, Math.PI * 2); rctx.closePath(); }
 
+// ============================================================================
+//  PETITES ICONES DU MENU RADIAL - dessinees au trait sur le meme canvas 2D
+//  que le reste (pas de fichier image a charger), pour repondre au retour
+//  "je voudrais des petites icones en plus du texte".
+// ============================================================================
+function dessinerPointeFleche(x, y, angle, taille) {
+  rctx.save(); rctx.translate(x, y); rctx.rotate(angle);
+  rctx.beginPath(); rctx.moveTo(0, 0); rctx.lineTo(-taille, -taille * 0.6); rctx.lineTo(-taille, taille * 0.6); rctx.closePath();
+  rctx.fill();
+  rctx.restore();
+}
+function dessinerFlecheCourbe(cx, cy, s, sens) {
+  var a0 = sens > 0 ? Math.PI * 1.15 : -0.15, a1 = sens > 0 ? -0.15 : Math.PI * 1.15;
+  rctx.beginPath(); rctx.arc(cx, cy, s * 0.6, a0, a1, sens < 0); rctx.stroke();
+  var ax = cx + Math.cos(a1) * s * 0.6, ay = cy + Math.sin(a1) * s * 0.6;
+  dessinerPointeFleche(ax, ay, a1 + (sens > 0 ? -Math.PI / 2 : Math.PI / 2), s * 0.3);
+}
+function dessinerCroixDeplacement(cx, cy, s) {
+  [0, Math.PI / 2, Math.PI, -Math.PI / 2].forEach(function (a) {
+    var x = cx + Math.cos(a) * s * 0.8, y = cy + Math.sin(a) * s * 0.8;
+    rctx.beginPath(); rctx.moveTo(cx, cy); rctx.lineTo(x, y); rctx.stroke();
+    dessinerPointeFleche(x, y, a, s * 0.28);
+  });
+}
+function dessinerIcone(cle, cx, cy, s) {
+  rctx.save();
+  rctx.strokeStyle = '#fff'; rctx.fillStyle = '#fff';
+  rctx.lineWidth = Math.max(2, s * 0.16); rctx.lineCap = 'round'; rctx.lineJoin = 'round';
+  if (cle === 'palette') {
+    rctx.beginPath(); rctx.arc(cx, cy + s * 0.1, s * 0.75, 0.15 * Math.PI, 0.95 * Math.PI, true); rctx.stroke();
+    [[-0.5, -0.1, '#e74c3c'], [0, -0.55, '#2ecc71'], [0.5, -0.1, '#3498db']].forEach(function (p) {
+      rctx.beginPath(); rctx.arc(cx + p[0] * s, cy + p[1] * s, s * 0.17, 0, Math.PI * 2); rctx.fillStyle = p[2]; rctx.fill();
+    });
+  } else if (cle === 'pinceau') {
+    rctx.beginPath(); rctx.moveTo(cx - s * 0.55, cy + s * 0.6); rctx.lineTo(cx + s * 0.5, cy - s * 0.55); rctx.stroke();
+    rctx.beginPath(); rctx.arc(cx + s * 0.55, cy - s * 0.6, s * 0.16, 0, Math.PI * 2); rctx.fill();
+  } else if (cle === 'reset') {
+    dessinerFlecheCourbe(cx, cy, s, 1);
+  } else if (cle === 'undo') {
+    dessinerFlecheCourbe(cx, cy, s, -1);
+  } else if (cle === 'redo') {
+    dessinerFlecheCourbe(cx, cy, s, 1);
+  } else if (cle === 'deplacer') {
+    dessinerCroixDeplacement(cx, cy, s);
+  } else if (cle === 'cible') {
+    rctx.beginPath(); rctx.arc(cx, cy, s * 0.6, 0, Math.PI * 2); rctx.stroke();
+    rctx.beginPath();
+    rctx.moveTo(cx - s * 0.85, cy); rctx.lineTo(cx - s * 0.35, cy);
+    rctx.moveTo(cx + s * 0.35, cy); rctx.lineTo(cx + s * 0.85, cy);
+    rctx.moveTo(cx, cy - s * 0.85); rctx.lineTo(cx, cy - s * 0.35);
+    rctx.moveTo(cx, cy + s * 0.35); rctx.lineTo(cx, cy + s * 0.85);
+    rctx.stroke();
+  } else if (cle === 'flechedouble') {
+    rctx.beginPath(); rctx.moveTo(cx - s * 0.7, cy); rctx.lineTo(cx + s * 0.7, cy); rctx.stroke();
+    dessinerPointeFleche(cx - s * 0.7, cy, Math.PI, s * 0.35);
+    dessinerPointeFleche(cx + s * 0.7, cy, 0, s * 0.35);
+  } else if (cle === 'regle') {
+    rctx.strokeRect(cx - s * 0.75, cy - s * 0.35, s * 1.5, s * 0.7);
+    for (var i = -2; i <= 2; i++) {
+      rctx.beginPath(); rctx.moveTo(cx + i * s * 0.3, cy - s * 0.35); rctx.lineTo(cx + i * s * 0.3, cy - s * 0.02); rctx.stroke();
+    }
+  } else if (cle === 'porte') {
+    rctx.strokeRect(cx - s * 0.55, cy - s * 0.75, s * 0.75, s * 1.5);
+    rctx.beginPath(); rctx.moveTo(cx - s * 0.1, cy); rctx.lineTo(cx + s * 0.75, cy); rctx.stroke();
+    dessinerPointeFleche(cx + s * 0.75, cy, 0, s * 0.3);
+  } else if (cle === 'table') {
+    rctx.beginPath();
+    rctx.moveTo(cx - s * 0.8, cy - s * 0.3); rctx.lineTo(cx + s * 0.8, cy - s * 0.3);
+    rctx.moveTo(cx - s * 0.6, cy - s * 0.3); rctx.lineTo(cx - s * 0.6, cy + s * 0.7);
+    rctx.moveTo(cx + s * 0.6, cy - s * 0.3); rctx.lineTo(cx + s * 0.6, cy + s * 0.7);
+    rctx.stroke();
+  } else if (cle === 'camera') {
+    rctx.strokeRect(cx - s * 0.75, cy - s * 0.45, s * 1.5, s * 0.9);
+    rctx.strokeRect(cx - s * 0.25, cy - s * 0.65, s * 0.5, s * 0.2);
+    rctx.beginPath(); rctx.arc(cx, cy, s * 0.3, 0, Math.PI * 2); rctx.stroke();
+  } else if (cle === 'image') {
+    rctx.strokeRect(cx - s * 0.75, cy - s * 0.55, s * 1.5, s * 1.1);
+    rctx.beginPath(); rctx.arc(cx - s * 0.35, cy - s * 0.15, s * 0.16, 0, Math.PI * 2); rctx.stroke();
+    rctx.beginPath();
+    rctx.moveTo(cx - s * 0.6, cy + s * 0.4); rctx.lineTo(cx - s * 0.1, cy - s * 0.1);
+    rctx.lineTo(cx + s * 0.2, cy + s * 0.15); rctx.lineTo(cx + s * 0.6, cy - s * 0.25); rctx.lineTo(cx + s * 0.6, cy + s * 0.4);
+    rctx.closePath(); rctx.stroke();
+  }
+  rctx.restore();
+}
+
 function dessinerRoue() {
   panneauSale = false;
   var c = RCV / 2;
@@ -1878,12 +1964,18 @@ function dessinerRoue() {
     // blanc supplementaire, plus grand, pour qu'on voie TOUJOURS lequel le
     // rayon vise en ce moment - avant meme d'appuyer sur la gachette.
     if (survole) { rctx.strokeStyle = '#ffffff'; rctx.lineWidth = 6; cerclePlein(p.x, p.y, RNODE / 2 + 8); rctx.stroke(); }
+    // Petite icone au-dessus du texte (si ce noeud en a une) : le texte
+    // descend d'autant pour lui laisser la place.
+    var avecIcone = !!p.node.icone;
+    if (avecIcone) dessinerIcone(p.node.icone, p.x, p.y - 22, 15);
+    var decalageY = avecIcone ? 18 : 0;
+
     rctx.fillStyle = '#fff'; rctx.textAlign = 'center';
     var texteNoeud = p.node.texte || p.node.label;
     var mots = texteNoeud.split(' ');
     if (mots.length === 1) {
       rctx.font = texteNoeud.length > 9 ? 'bold 15px sans-serif' : 'bold 18px sans-serif';
-      rctx.fillText(texteNoeud, p.x, p.y + 6);
+      rctx.fillText(texteNoeud, p.x, p.y + 6 + decalageY);
     } else {
       // Repartit les mots sur 2 lignes en equilibrant leur longueur (plutot
       // que de toujours couper apres le 1er mot) - plus lisible pour les
@@ -1895,8 +1987,8 @@ function dessinerRoue() {
         if (ecart < meilleurEcart) { meilleurEcart = ecart; meilleureCoupe = s; }
       }
       rctx.font = 'bold 15px sans-serif';
-      rctx.fillText(mots.slice(0, meilleureCoupe).join(' '), p.x, p.y - 10);
-      rctx.fillText(mots.slice(meilleureCoupe).join(' '), p.x, p.y + 10);
+      rctx.fillText(mots.slice(0, meilleureCoupe).join(' '), p.x, p.y - 10 + decalageY);
+      rctx.fillText(mots.slice(meilleureCoupe).join(' '), p.x, p.y + 10 + decalageY);
     }
   });
 
