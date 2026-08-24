@@ -46,7 +46,7 @@
 <footer>
   <a href="index.html">&#8592; Retour a l'accueil</a>
   <span class="sep"></span>
-  <span>Lecture seule : ne peut pas agir sur le modele.</span>
+  <span>Glisser = orbiter &middot; Molette = zoom &middot; Clic molette = translater &middot; Lecture seule, ne peut pas agir sur le modele.</span>
 </footer>
 
 <script src="three.min.js"></script>
@@ -71,9 +71,11 @@
   renderer.setClearColor(0x0d1219, 1);
 
   var scene = new THREE.Scene();
-  scene.add(new THREE.AmbientLight(0xffffff, 1.4));
-  var dl = new THREE.DirectionalLight(0xffffff, 1); dl.position.set(1, 2, 1); scene.add(dl);
-  var dl2 = new THREE.DirectionalLight(0xffffff, 0.4); dl2.position.set(-1, 1, -1); scene.add(dl2);
+  // Meme renforcement d'eclairage que app.js (certains modeles restaient
+  // trop sombres avec une seule lumiere directionnelle).
+  scene.add(new THREE.AmbientLight(0xffffff, 1.8));
+  var dl = new THREE.DirectionalLight(0xffffff, 1.1); dl.position.set(1, 2, 1); scene.add(dl);
+  var dl2 = new THREE.DirectionalLight(0xffffff, 0.7); dl2.position.set(-1, 0.5, -1.5); scene.add(dl2);
 
   var camera = new THREE.PerspectiveCamera(45, 1, 0.01, 20);
   var cible = new THREE.Vector3(0, 0.12, 0);
@@ -87,14 +89,33 @@
     camera.lookAt(cible);
   }
   (function () {
-    var drag = false, lx = 0, ly = 0;
-    canvas.addEventListener('mousedown', function (e) { drag = true; lx = e.clientX; ly = e.clientY; });
-    window.addEventListener('mouseup', function () { drag = false; });
-    window.addEventListener('mousemove', function (e) {
-      if (!drag) return;
-      orbit.theta -= (e.clientX - lx) * 0.01;
-      orbit.phi = Math.max(0.2, Math.min(2.6, orbit.phi - (e.clientY - ly) * 0.01));
+    // Clic gauche = orbiter ; clic MOLETTE (bouton du milieu) maintenu =
+    // translater la cible (pan), comme dans un logiciel 3D classique.
+    var mode = null, lx = 0, ly = 0; // mode: 'orbit' | 'pan'
+    var _droite = new THREE.Vector3(), _haut = new THREE.Vector3(), _avant = new THREE.Vector3();
+    canvas.addEventListener('mousedown', function (e) {
+      if (e.button === 1) { mode = 'pan'; e.preventDefault(); }
+      else if (e.button === 0) { mode = 'orbit'; }
+      else return;
       lx = e.clientX; ly = e.clientY;
+    });
+    // Empeche le mode "auto-scroll" que Chrome/Firefox declenchent par
+    // defaut sur un clic molette (sinon le pan ne marche pas du tout).
+    canvas.addEventListener('auxclick', function (e) { if (e.button === 1) e.preventDefault(); });
+    window.addEventListener('mouseup', function () { mode = null; });
+    window.addEventListener('mousemove', function (e) {
+      if (!mode) return;
+      var dx = e.clientX - lx, dy = e.clientY - ly;
+      lx = e.clientX; ly = e.clientY;
+      if (mode === 'orbit') {
+        orbit.theta -= dx * 0.01;
+        orbit.phi = Math.max(0.2, Math.min(2.6, orbit.phi - dy * 0.01));
+      } else {
+        camera.matrixWorld.extractBasis(_droite, _haut, _avant);
+        var echelle = orbit.rayon * 0.0015;
+        cible.addScaledVector(_droite, -dx * echelle);
+        cible.addScaledVector(_haut, dy * echelle);
+      }
     });
     canvas.addEventListener('wheel', function (e) {
       e.preventDefault();

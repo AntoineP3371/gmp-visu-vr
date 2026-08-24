@@ -139,10 +139,17 @@ var camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHei
 // scene.traverse()/renderer.render() ne descend que depuis la racine scene.
 scene.add(camera);
 
-scene.add(new THREE.AmbientLight(0xffffff, 1.5));
-var dirLight = new THREE.DirectionalLight(0xffffff, 1);
+// Eclairage renforce (ambiante + 2 directionnelles opposees) : certains
+// modeles (materiaux sombres/metalliques issus d'export STEP) restaient trop
+// sombres avec une seule lumiere directionnelle - la 2eme, en contre-jour,
+// eclaire les faces que la 1ere laisse dans l'ombre.
+scene.add(new THREE.AmbientLight(0xffffff, 1.8));
+var dirLight = new THREE.DirectionalLight(0xffffff, 1.1);
 dirLight.position.set(1, 2, 1);
 scene.add(dirLight);
+var dirLight2 = new THREE.DirectionalLight(0xffffff, 0.7);
+dirLight2.position.set(-1, 0.5, -1.5);
+scene.add(dirLight2);
 
 function rr(c, x, y, w, h, r) {
   c.beginPath();
@@ -2529,6 +2536,7 @@ var modeTelephone = false;
 var dragBureau = null;
 var orbite = { cible: new THREE.Vector3(0, 0.15, 0), distance: 0.6, yaw: 0.6, tangage: 0.45 };
 var etatSourisOrbite = null;
+var etatPanSouris = null; // clic molette maintenu = translater la cible (pan)
 
 // Le canvas ne redimensionne jamais son buffer de rendu tout seul (WebXR
 // gere ca via le compositeur du casque, mais pas nous en mode bureau) :
@@ -2648,6 +2656,13 @@ function terminerDragBureau() {
 
 canvas.addEventListener('mousedown', function (evt) {
   if (!modeBureau || !anchorPlaced) return;
+  if (evt.button === 1) {
+    // Clic MOLETTE (bouton du milieu) maintenu = translater la vue (pan),
+    // comme dans un logiciel 3D classique - prioritaire sur tout le reste.
+    evt.preventDefault();
+    etatPanSouris = { x: evt.clientX, y: evt.clientY };
+    return;
+  }
   var ray = rayonSourisDepuis(evt);
 
   if (mesureCroix) {
@@ -2698,8 +2713,21 @@ canvas.addEventListener('mousedown', function (evt) {
 
   etatSourisOrbite = { x: evt.clientX, y: evt.clientY };
 });
+canvas.addEventListener('auxclick', function (evt) {
+  if (modeBureau && evt.button === 1) evt.preventDefault();
+});
 window.addEventListener('mousemove', function (evt) {
   if (!modeBureau) return;
+  if (etatPanSouris) {
+    var dxP = evt.clientX - etatPanSouris.x, dyP = evt.clientY - etatPanSouris.y;
+    etatPanSouris = { x: evt.clientX, y: evt.clientY };
+    var droite = new THREE.Vector3(), haut = new THREE.Vector3(), avant = new THREE.Vector3();
+    camera.matrixWorld.extractBasis(droite, haut, avant);
+    var echellePan = orbite.distance * 0.0015;
+    orbite.cible.addScaledVector(droite, -dxP * echellePan);
+    orbite.cible.addScaledVector(haut, dyP * echellePan);
+    return;
+  }
   if (dragBureau) {
     var ray = rayonSourisDepuis(evt);
     majDragBureau(ray.ray.origin, ray.ray.direction);
@@ -2716,6 +2744,7 @@ window.addEventListener('mouseup', function () {
   if (!modeBureau) return;
   if (dragBureau) terminerDragBureau();
   etatSourisOrbite = null;
+  etatPanSouris = null;
 });
 canvas.addEventListener('wheel', function (evt) {
   if (!modeBureau) return;
@@ -2839,7 +2868,7 @@ function majBarreBureau() {
   // mode telephone (aide = gestes tactiles) - meme structure, texte adapte.
   document.getElementById('aideLibre').textContent = modeTelephone
     ? 'Tapoter et glisser sur le modele : le deplacer a main levee'
-    : 'Glisser = orbiter · Molette = zoom vue · Maj+clic = choisir une piece · Ctrl+glisser = deplacer la cible';
+    : 'Glisser = orbiter · Molette = zoom vue · Clic molette = translater la vue · Maj+clic = choisir une piece · Ctrl+glisser = deplacer la cible';
   document.getElementById('aidePrecision').textContent = modeTelephone
     ? 'Tapoter + glisser sur une fleche/anneau'
     : 'Ctrl+glisser sur une fleche/anneau';
