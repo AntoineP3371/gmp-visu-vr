@@ -567,9 +567,22 @@ function afficherLabelTransparence(objet, texte) {
   spriteTransp.visible = true;
 }
 
+// Vrai si ce mesh fait partie d'un objet de la selection (une piece de 1er
+// niveau OU une piece fine choisie dans la liste des pieces).
+function estSelectionnee(mesh) {
+  for (var o = mesh; o; o = o.parent) { if (selection.indexOf(o) !== -1) return true; }
+  return false;
+}
+
 function relacherSelection() {
   if (pivotSelection) {
-    pivotSelection.children.slice().forEach(function (p) { pivot.attach(p); });
+    pivotSelection.children.slice().forEach(function (p) {
+      // Une piece fine (choisie dans la liste) retourne dans SON assemblage ;
+      // les pieces de 1er niveau retournent au pivot, comme avant.
+      var o = p.userData.origineLocale;
+      var dest = (o && !p.userData.matriceRelPivotOrigine && o.parent) ? o.parent : pivot;
+      dest.attach(p);
+    });
     pivot.remove(pivotSelection);
     pivotSelection = null;
   }
@@ -2217,6 +2230,7 @@ var MENU_RACINE = [
       ] },
       { label: 'RAZ generale', texte: 'RAZ tout', icone: 'reset', action: razGenerale }
   ] },
+  { label: 'Pieces', texte: 'Pieces', icone: 'liste', accent: '#3b6d11', action: function () { ouvrirListePieces(); } },
   { label: 'Mesures', texte: 'Mesures', icone: 'regle', accent: '#0f6e56', action: function () { definirMode(MODE.MESURE); }, mesures: true },
   { label: 'Annuler / Refaire / Quitter / Remettre', texte: 'Actions', icone: 'undo', accent: '#534ab7', sub: [
       { label: 'Annuler', icone: 'undo', action: annuler },
@@ -2441,6 +2455,11 @@ function dessinerIcone(cle, cx, cy, s) {
     rctx.moveTo(cx - s * 0.8, cy - s * 0.1); rctx.lineTo(cx - s * 0.25, cy - s * 0.1);
     rctx.stroke();
     rctx.strokeRect(cx + s * 0.1, cy - s * 0.75, s * 0.65, s * 0.65);
+  } else if (cle === 'liste') {
+    [-0.5, 0, 0.5].forEach(function (dy) {
+      rctx.beginPath(); rctx.arc(cx - s * 0.65, cy + dy * s, s * 0.1, 0, Math.PI * 2); rctx.fill();
+      rctx.beginPath(); rctx.moveTo(cx - s * 0.35, cy + dy * s); rctx.lineTo(cx + s * 0.75, cy + dy * s); rctx.stroke();
+    });
   }
   rctx.restore();
 }
@@ -2551,6 +2570,7 @@ var NOTICE_SECTIONS = [
       'Attraper a main levee : Grip',
       'Choisir une/des piece(s) : A + gachette sur chaque',
       'Revenir au modele entier : bouton Libre',
+      'Liste des pieces : menu Pieces (par sous-ensemble) - vise une ligne + gachette pour la selectionner',
       'Dissocier une piece : outil Dissocier, vise une piece, tiens la gachette et bouge la main ; pres de sa place un fantome apparait, relache = elle est aspiree',
       'Deplacer precisement : viser fleche/anneau + gachette',
       'Remettre a l\'origine : bouton RAZ rouge (un axe) ou RAZ generale (tout), ou approche = aimantation automatique',
@@ -2665,6 +2685,151 @@ function fermerNoticeAide() {
   noticeAideMesh = null;
 }
 
+// ============================================================================
+//  LISTE DES PIECES (menu "Pieces") : panneau flottant, pieces rangees par
+//  sous-ensemble et paginees. Vise une ligne + gachette = (de)selectionner
+//  cette piece (comme A + gachette) ; la ligne d'un sous-ensemble selectionne
+//  tout le sous-ensemble.
+// ============================================================================
+var LCV_L = 900, LCV_H = 1100, LIGNES_LISTE = 16, HAUT_LIGNE = 54, Y0_LISTE = 96;
+var lc = document.createElement('canvas'); lc.width = LCV_L; lc.height = LCV_H;
+var lctx = lc.getContext('2d');
+var ltex = new THREE.CanvasTexture(lc);
+var listePiecesMesh = null;
+var listeEntrees = [], listePage = 0, listeZones = [], listeHover = -1;
+
+function nomPiece(o, i) {
+  var n = (o.name || '').replace(/_<[^>]*>$/, '').replace(/_/g, ' ').trim();
+  return n || ('Piece ' + (i + 1));
+}
+function construireEntreesListe() {
+  var groupes = [], index = new Map();
+  piecesFines.forEach(function (f, i) {
+    var oc = f.userData.origineLocale;
+    var asm = (oc && oc.parent) ? trouverPieceRacine(oc.parent) : null;
+    var cle = asm || 'autres';
+    var g = index.get(cle);
+    if (!g) { g = { asm: asm, titre: asm ? nomPiece(asm, 0) : 'Pieces seules', pieces: [], noms: {} }; index.set(cle, g); groupes.push(g); }
+    var nom = nomPiece(f, i);
+    g.noms[nom] = (g.noms[nom] || 0) + 1;
+    g.pieces.push({ f: f, nom: nom, n: g.noms[nom] });
+  });
+  var entrees = [];
+  groupes.forEach(function (g) {
+    entrees.push({ type: 'titre', obj: g.asm, texte: g.titre + ' (' + g.pieces.length + ')' });
+    g.pieces.forEach(function (p) { entrees.push({ type: 'piece', obj: p.f, texte: g.noms[p.nom] > 1 ? p.nom + ' #' + p.n : p.nom }); });
+  });
+  return entrees;
+}
+function nbPagesListe() { return Math.max(1, Math.ceil(listeEntrees.length / LIGNES_LISTE)); }
+
+function dessinerListePieces() {
+  lctx.clearRect(0, 0, LCV_L, LCV_H);
+  lctx.fillStyle = 'rgba(16,20,26,0.97)'; lctx.fillRect(0, 0, LCV_L, LCV_H);
+  lctx.strokeStyle = '#2f8fd6'; lctx.lineWidth = 4; lctx.strokeRect(2, 2, LCV_L - 4, LCV_H - 4);
+  lctx.textAlign = 'left'; lctx.fillStyle = '#fff'; lctx.font = 'bold 30px sans-serif';
+  lctx.fillText('Pieces - page ' + (listePage + 1) + '/' + nbPagesListe(), 24, 44);
+  lctx.fillStyle = '#9aa5ad'; lctx.font = '16px sans-serif';
+  lctx.fillText('Vise une ligne + gachette = (de)selectionner. ' + selection.length + ' selectionnee(s).', 24, 72);
+
+  listeZones = [];
+  var debut = listePage * LIGNES_LISTE;
+  listeEntrees.slice(debut, debut + LIGNES_LISTE).forEach(function (e, k) {
+    var y = Y0_LISTE + k * HAUT_LIGNE, sel = !!e.obj && selection.indexOf(e.obj) !== -1;
+    var z = { x: 20, y: y, w: 860, h: HAUT_LIGNE - 6, entree: e, id: listeZones.length };
+    listeZones.push(z);
+    lctx.fillStyle = sel ? '#6b5a14' : (e.type === 'titre' ? '#2a3342' : '#1f2630');
+    lctx.fillRect(z.x, z.y, z.w, z.h);
+    lctx.strokeStyle = (listeHover === z.id) ? '#ffffff' : (sel ? '#ffee00' : '#3a4553');
+    lctx.lineWidth = (listeHover === z.id || sel) ? 4 : 2; lctx.strokeRect(z.x, z.y, z.w, z.h);
+    lctx.fillStyle = e.type === 'titre' ? '#8fd6ff' : '#fff';
+    lctx.font = (e.type === 'titre' ? 'bold ' : '') + '24px sans-serif';
+    var txt = e.texte; while (lctx.measureText(txt).width > z.w - (e.type === 'titre' ? 24 : 54) && txt.length > 4) txt = txt.slice(0, -2);
+    if (txt !== e.texte) txt += '…';
+    lctx.fillText(txt, z.x + (e.type === 'titre' ? 12 : 42), z.y + 33);
+  });
+
+  var yb = Y0_LISTE + LIGNES_LISTE * HAUT_LIGNE + 14, x = 20;
+  [['<< 5', 'p5', 100], ['< Prec.', 'prec', 140], ['Suiv. >', 'suiv', 140], ['5 >>', 's5', 100],
+   ['Tout deselectionner', 'tout', 230], ['Fermer', 'fermer', 110]].forEach(function (b) {
+    var z = { x: x, y: yb, w: b[2], h: 56, act: b[1], id: listeZones.length };
+    listeZones.push(z);
+    lctx.fillStyle = b[1] === 'fermer' ? '#8e2b2b' : '#242c37'; lctx.fillRect(z.x, z.y, z.w, z.h);
+    lctx.strokeStyle = (listeHover === z.id) ? '#ffffff' : '#3a4553'; lctx.lineWidth = (listeHover === z.id) ? 4 : 2; lctx.strokeRect(z.x, z.y, z.w, z.h);
+    lctx.fillStyle = '#fff'; lctx.font = 'bold 20px sans-serif'; lctx.textAlign = 'center';
+    lctx.fillText(b[0], z.x + z.w / 2, z.y + 36); lctx.textAlign = 'left';
+    x += b[2] + 8;
+  });
+  ltex.needsUpdate = true;
+}
+function zoneListeSousUV(uv) {
+  var cx = uv.x * LCV_L, cy = (1 - uv.y) * LCV_H;
+  for (var i = 0; i < listeZones.length; i++) {
+    var z = listeZones[i];
+    if (cx >= z.x && cx <= z.x + z.w && cy >= z.y && cy <= z.y + z.h) return z;
+  }
+  return null;
+}
+function basculerSelectionObjet(obj) {
+  if (!obj) return;
+  var i = selection.indexOf(obj);
+  if (i >= 0) { restaurerOpaciteDe([obj]); selection.splice(i, 1); }
+  else {
+    // Deja couvert par un sous-ensemble selectionne : rien a ajouter.
+    for (var a = obj.parent; a; a = a.parent) { if (selection.indexOf(a) !== -1) return; }
+    selection.push(obj);
+  }
+  surlignerSelection(); reconstruireCible(); majPanneau();
+}
+function cliquerListePieces(uv) {
+  var z = zoneListeSousUV(uv); if (!z) return;
+  if (z.act === 'fermer') { fermerListePieces(); return; }
+  if (z.act === 'prec') listePage = Math.max(0, listePage - 1);
+  else if (z.act === 'suiv') listePage = Math.min(nbPagesListe() - 1, listePage + 1);
+  else if (z.act === 'p5') listePage = Math.max(0, listePage - 5);
+  else if (z.act === 's5') listePage = Math.min(nbPagesListe() - 1, listePage + 5);
+  else if (z.act === 'tout') desactiverSelectionAB();
+  else if (z.entree) basculerSelectionObjet(z.entree.obj);
+  dessinerListePieces();
+}
+function ouvrirListePieces() {
+  if (listePiecesMesh) { fermerListePieces(); return; }
+  if (!piecesFines.length) return;
+  listeEntrees = construireEntreesListe(); listePage = 0; listeHover = -1;
+  dessinerListePieces();
+  var largeur = 0.55, hauteur = largeur * (LCV_H / LCV_L);
+  listePiecesMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(largeur, hauteur),
+    new THREE.MeshBasicMaterial({ map: ltex, transparent: true, depthTest: false, side: THREE.DoubleSide })
+  );
+  listePiecesMesh.renderOrder = 1600;
+  var pos = new THREE.Vector3(), dir = new THREE.Vector3();
+  camera.getWorldPosition(pos); camera.getWorldDirection(dir);
+  listePiecesMesh.position.copy(pos).add(dir.multiplyScalar(0.8));
+  listePiecesMesh.quaternion.copy(camera.getWorldQuaternion(new THREE.Quaternion()));
+  scene.add(listePiecesMesh);
+}
+function fermerListePieces() {
+  if (!listePiecesMesh) return;
+  scene.remove(listePiecesMesh);
+  listePiecesMesh.material.dispose();
+  listePiecesMesh = null;
+}
+// Survol (anneau blanc sur la ligne visee) + rafraichissement quand la
+// selection change ailleurs (A + gachette...). Appele chaque frame, ne
+// redessine que si quelque chose a change.
+var _sigListe = '';
+function majListePieces() {
+  if (!listePiecesMesh) return;
+  var survol = -1;
+  controllers.forEach(function (ctrl) {
+    var hits = rayonDe(ctrl).intersectObject(listePiecesMesh, false);
+    if (hits.length && hits[0].uv) { var z = zoneListeSousUV(hits[0].uv); if (z) survol = z.id; }
+  });
+  var sig = survol + '|' + selection.length + '|' + selection.map(function (s) { return s.id; }).join(',') + '|' + listePage;
+  if (sig !== _sigListe) { _sigListe = sig; listeHover = survol; dessinerListePieces(); }
+}
+
 function zoneRoue(uv) {
   var c = RCV / 2, cx = uv.x * RCV, cy = (1 - uv.y) * RCV;
   if (Math.hypot(cx - c, cy - c) < RHUB) return 'back';
@@ -2746,6 +2911,11 @@ function gererSelectStart(idx, ctrl) {
   if (noticeAideMesh) {
     var hitsNotice = ray.intersectObject(noticeAideMesh, false);
     if (hitsNotice.length) { fermerNoticeAide(); return; }
+  }
+
+  if (listePiecesMesh) {
+    var hitsListe = ray.intersectObject(listePiecesMesh, false);
+    if (hitsListe.length && hitsListe[0].uv) { cliquerListePieces(hitsListe[0].uv); return; }
   }
 
   if (mesureCroix) {
@@ -2892,7 +3062,7 @@ function appliquerSurvolPiece(idx, mesh) {
     var autreIdx = 1 - idx;
     var fPrec = pieceFineDe(precedent);
     var encoreVise = pieceSurvolee[autreIdx] && pieceFineDe(pieceSurvolee[autreIdx]) === fPrec;
-    var estSelectionne = selection.indexOf(trouverPieceRacine(precedent)) !== -1;
+    var estSelectionne = estSelectionnee(precedent);
     if (!encoreVise && !estSelectionne) {
       meshesDePiece(fPrec).forEach(function (mm) {
         var matsPrec = Array.isArray(mm.material) ? mm.material : [mm.material];
@@ -2901,7 +3071,7 @@ function appliquerSurvolPiece(idx, mesh) {
     }
   }
   pieceSurvolee[idx] = mesh;
-  if (mesh && selection.indexOf(trouverPieceRacine(mesh)) === -1) {
+  if (mesh && !estSelectionnee(mesh)) {
     meshesDePiece(pieceFineDe(mesh)).forEach(function (mm) {
       var mats = Array.isArray(mm.material) ? mm.material : [mm.material];
       mats.forEach(function (m) { if (m.emissive) m.emissive.setHex(0x2255aa); });
@@ -3147,6 +3317,7 @@ renderer.setAnimationLoop(function (time, frame) {
   if (dissocie) majDissocier();
   if (aspiration) majAspiration(time);
   majMarqueurMontre(performance.now());
+  if (listePiecesMesh) majListePieces();
   diffuserPoseLiveSiActif(time);
   diffuserPresenceSiActif(time);
   diffuserTeteSiActif(time);
@@ -3325,6 +3496,7 @@ function reinitialiserApresSession() {
   dragEtat = null;
   dissocie = null; aspiration = null; piecesFines = [];
   montreCible = null; marqueurMontre.visible = false;
+  fermerListePieces();
   viderFantome();
   _dernierAimantAxe = null;
   // Fond gris du mode bureau (cf btnBureau) : jamais pertinent en AR/VR, ou

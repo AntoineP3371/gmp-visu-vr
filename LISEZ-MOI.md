@@ -1,4 +1,4 @@
-# Visionneuse CAO en réalité mixte — v1.24.0
+# Visionneuse CAO en réalité mixte — v1.25.0
 
 Application WebXR pour Meta Quest 3 : pose n'importe quel modèle 3D (issu
 d'une modélisation 3DEXPERIENCE) sur une vraie table, manipule-le à main
@@ -67,6 +67,7 @@ gâchette.
 | Déplacer la sélection à main levée ou précisément | Relâche A si besoin : **la sélection reste active**, grip ou gizmo agissent dessus normalement |
 | Régler la transparence de la sélection | **A tenu**, pousse le **joystick** haut/bas - un pourcentage (100 % opaque → 0 % transparent) s'affiche en direct au-dessus de la pièce. **Le réglage reste tel quel quand tu relâches** le joystick ou la gâchette - pousse dans l'autre sens pour ré-opacifier |
 | **Régler la transparence d'une pièce visée**, sans la sélectionner d'abord | Vise-la au laser (**gâchette tenue**), pousse le **joystick** haut/bas - même comportement (pourcentage, ça reste) |
+| **Liste des pièces** (menu **Pièces**) | Ouvre un panneau devant toi avec **toutes les pièces**, rangées par sous-ensemble et paginées (« < Préc. », « Suiv. > », « << 5 »/« 5 >> » pour aller plus vite). Vise une ligne + **gâchette** = **sélectionner** cette pièce (elle devient la cible à déplacer, colorer, rendre transparente, comme avec A + gâchette) ; la ligne d'un sous-ensemble sélectionne tout le sous-ensemble ; reclic = désélectionner ; « Tout désélectionner » et « Fermer » en bas |
 | **Dissocier une pièce de l'assemblage** (menu Déplacements > **Dissocier**) | Vise **une pièce précise** (pas son sous-ensemble), maintiens la **gâchette** : elle se sépare et suit ta main. En l'approchant de sa place initiale (≈ 12 cm), **un fantôme bleu** apparaît à cet endroit ; **relâche la gâchette** : la pièce est **aspirée** dans sa place (petite animation + vibration). Plus loin, elle reste là où tu l'as lâchée. Annuler/Refaire et RAZ générale la gèrent ; l'écran spectateur la suit aussi. Casque/téléphone uniquement (pas en mode souris) |
 | **Revenir à « tout le modèle »** | Bouton **« Libre »** (menu Déplacements) - désélectionne et repasse en déplacement libre |
 | **Zoomer** (avant/arrière, sur tout le modèle) | Maintiens le **grip des 2 manettes en même temps** - le % s'affiche en direct entre les 2 mains, et « s'aimante » sur 50/75/100/125/150/200% |
