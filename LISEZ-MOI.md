@@ -1,4 +1,4 @@
-# Visionneuse CAO en réalité mixte — v1.22.0
+# Visionneuse CAO en réalité mixte — v1.23.0
 
 Application WebXR pour Meta Quest 3 : pose n'importe quel modèle 3D (issu
 d'une modélisation 3DEXPERIENCE) sur une vraie table, manipule-le à main
@@ -336,6 +336,17 @@ pas besoin de créer un nouveau compte :
 > ce sont les 2 valeurs à coller. Cette clé est volontairement visible dans
 > le code (comme la clé Google Drive plus haut) : c'est une clé publique
 > restreinte à la diffusion, pas un mot de passe.
+
+### Voir ce que voit le casque
+
+Bouton **« Voir ce que voit le casque »** (en haut de la page spectateur) : la
+vue du spectateur **suit la tête du porteur** - tu vois le modèle exactement
+comme lui, avec ses mouvements de tête (lissés, la position arrive environ 10
+fois par seconde). Ce n'est pas la vraie caméra du casque (WebXR ne la donne
+pas) : on ne voit que le modèle, pas la pièce réelle. Pendant ce mode la souris
+n'oriente plus la vue (reclic sur le bouton = retour à la vue libre) ; « Montrer
+au casque » reste utilisable dans cette vue. Si plusieurs casques sont actifs,
+c'est celui de la liste « Casque suivi ».
 
 ### Montrer quelque chose au casque (spectateur → casque)
 
