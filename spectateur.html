@@ -92,9 +92,10 @@
   // Memes intensites revues a la baisse que app.js (etaient 1.8/1.1/0.7,
   // trop pales une fois cumulees avec le sRGB deja en place) - cf commentaire
   // equivalent dans app.js.
-  scene.add(new THREE.AmbientLight(0xffffff, 0.9));
-  var dl = new THREE.DirectionalLight(0xffffff, 1.3); dl.position.set(1, 2, 1); scene.add(dl);
-  var dl2 = new THREE.DirectionalLight(0xffffff, 0.35); dl2.position.set(-1, 0.5, -1.5); scene.add(dl2);
+  // v1.27.0 : memes intensites que app.js (0.45/0.7/0.3), cf commentaire la-bas.
+  scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+  var dl = new THREE.DirectionalLight(0xffffff, 0.7); dl.position.set(1, 2, 1); scene.add(dl);
+  var dl2 = new THREE.DirectionalLight(0xffffff, 0.3); dl2.position.set(-1, 0.5, -1.5); scene.add(dl2);
 
   var camera = new THREE.PerspectiveCamera(45, 1, 0.01, 20);
   var cible = new THREE.Vector3(0, 0.12, 0);
@@ -286,7 +287,9 @@
     var o = pieces[pi];
     if (!o) return;
     var mat = Array.isArray(o.material) ? o.material[mi] : o.material;
-    if (mat) mat.color.setHex(hex);
+    // Les couleurs recues sont des hex sRGB (comme dans app.js) : conversion en lineaire,
+    // sinon teintes delavees avec la sortie sRGB.
+    if (mat) mat.color.setHex(hex).convertSRGBToLinear();
   }
 
   // ============================ LASER ============================

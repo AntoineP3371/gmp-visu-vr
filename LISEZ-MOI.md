@@ -1,4 +1,4 @@
-# Visionneuse CAO en réalité mixte — v1.26.1
+# Visionneuse CAO en réalité mixte — v1.27.0
 
 Application WebXR pour Meta Quest 3 : pose n'importe quel modèle 3D (issu
 d'une modélisation 3DEXPERIENCE) sur une vraie table, manipule-le à main
@@ -120,7 +120,8 @@ sans avoir le Quest sous la main.
 | Orbiter la vue | Glisser (clic gauche) |
 | Zoomer la vue (caméra) | Molette |
 | Choisir une/des pièce(s) | **Maj + clic** sur une pièce (reclic = désélectionne) |
-| Déplacer la cible / utiliser le gizmo / peindre / mesurer | **Ctrl + glisser** ou **Ctrl + clic** (selon l'onglet actif) |
+| **Colorer une pièce** (onglet COULEUR) / **mesurer** (onglet MESURES) | **Simple clic** sur la pièce (un glisser continue d'orbiter la vue). Colorer : choisis d'abord une couleur dans la palette ; toute la pièce est colorée. Mesurer : clic sur un 1er point puis un 2e |
+| Déplacer la cible / utiliser le gizmo | **Ctrl + glisser** ou **Ctrl + clic** (selon l'onglet actif) |
 | Tout le reste (onglets MAIN LIBRE/PRÉCISION/COULEUR/MESURES/CAPTURE, RAZ, RAZ GÉNÉRALE, palette, annuler/refaire, % d'échelle, fond de capture) | Barre d'outils en haut de l'écran |
 
 > 💡 **Aimantation au retour à l'origine** : en ramenant une pièce ou un

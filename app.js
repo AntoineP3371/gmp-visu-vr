@@ -163,11 +163,15 @@ scene.add(camera);
 // au casque (double compensation). Ambiante baissee (c'est elle qui aplatit
 // le rendu), directionnelle principale legerement remontee (c'est elle qui
 // donne du relief/contraste, l'inverse de "pale").
-scene.add(new THREE.AmbientLight(0xffffff, 0.9));
-var dirLight = new THREE.DirectionalLight(0xffffff, 1.3);
+// v1.27.0 : encore baisse (0.9/1.3/0.35 -> 0.45/0.7/0.3). Avec ambiante + directionnelle > 1, une piece
+// BLANCHE (cas du modele de demo) etait ecretee en blanc plat sans aucun relief, et toute couleur
+// choisie ressortait en pastel delave (rouge -> saumon) - d'ou "on ne peut pas mettre de couleurs".
+// Somme maximale proche de 1 : les surfaces gardent leur vraie teinte ET leur ombrage.
+scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+var dirLight = new THREE.DirectionalLight(0xffffff, 0.7);
 dirLight.position.set(1, 2, 1);
 scene.add(dirLight);
-var dirLight2 = new THREE.DirectionalLight(0xffffff, 0.35);
+var dirLight2 = new THREE.DirectionalLight(0xffffff, 0.3);
 dirLight2.position.set(-1, 0.5, -1.5);
 scene.add(dirLight2);
 
@@ -322,11 +326,20 @@ function appliquerAction(a, versApres) {
   } else if (a.type === 'echelle') {
     pivot.scale.setScalar(versApres ? a.apres : a.avant);
   } else if (a.type === 'couleur') {
-    a.mat.color.setHex(versApres ? a.apres : a.avant);
+    appliquerHexSRGB(a.mat, versApres ? a.apres : a.avant);
   } else if (a.type === 'couleur-lot') {
-    a.entrees.forEach(function (e) { e.mat.color.setHex(versApres ? e.apres : e.avant); });
+    a.entrees.forEach(function (e) { appliquerHexSRGB(e.mat, versApres ? e.apres : e.avant); });
   }
 }
+
+// Les couleurs de la palette (et celles echangees avec le spectateur, l'historique
+// Annuler...) sont des hexadecimaux sRGB "ecran". three r128 traite par contre
+// toute couleur comme LINEAIRE : avec renderer.outputEncoding = sRGB, un
+// setHex direct sortait delave (rouge c0392b -> saumon) - cause reelle du
+// "couleurs trop pales" / "on ne peut pas mettre de couleurs", masquee jusque-la
+// par les reglages de lumiere. On convertit donc a l'ecriture ET a la lecture.
+function appliquerHexSRGB(mat, hex) { mat.color.setHex(hex).convertSRGBToLinear(); }
+function lireHexSRGB(mat) { return mat.color.clone().convertLinearToSRGB().getHex(); }
 function annuler() {
   if (!historique.length) return;
   var a = historique.pop();
@@ -395,10 +408,10 @@ function chargerModele(fichier) {
       if (!o.isMesh) return;
       if (Array.isArray(o.material)) {
         o.material = o.material.map(function (m) { return m.clone(); });
-        o.userData.couleursOrigine = o.material.map(function (m) { return m.color.getHex(); });
+        o.userData.couleursOrigine = o.material.map(lireHexSRGB);
       } else {
         o.material = o.material.clone();
-        o.userData.couleursOrigine = [o.material.color.getHex()];
+        o.userData.couleursOrigine = [lireHexSRGB(o.material)];
       }
       pieces.push(o);
     });
@@ -1547,9 +1560,9 @@ function remplirPiece(inter) {
     var pieceIdx = pieces.indexOf(m);
     var mats = Array.isArray(m.material) ? m.material : [m.material];
     mats.forEach(function (mat, matIdx) {
-      var avant = mat.color.getHex();
+      var avant = lireHexSRGB(mat);
       if (avant === apres) return;
-      mat.color.setHex(apres);
+      appliquerHexSRGB(mat, apres);
       entrees.push({ mat: mat, avant: avant, apres: apres, pieceIdx: pieceIdx, matIdx: matIdx });
     });
   });
@@ -1567,8 +1580,8 @@ function colorierAutomatiquement() {
       var pieceIdx = pieces.indexOf(m);
       var mats = Array.isArray(m.material) ? m.material : [m.material];
       mats.forEach(function (mat, matIdx) {
-        var avant = mat.color.getHex();
-        mat.color.setHex(apres);
+        var avant = lireHexSRGB(mat);
+        appliquerHexSRGB(mat, apres);
         entrees.push({ mat: mat, avant: avant, apres: apres, pieceIdx: pieceIdx, matIdx: matIdx });
       });
     });
@@ -1584,10 +1597,10 @@ function reinitialiserCouleurs() {
     var pieceIdx = pieces.indexOf(o);
     var mats = Array.isArray(o.material) ? o.material : [o.material];
     mats.forEach(function (m, i) {
-      var avant = m.color.getHex();
+      var avant = lireHexSRGB(m);
       var apres = orig[i];
       if (avant === apres) return;
-      m.color.setHex(apres);
+      appliquerHexSRGB(m, apres);
       entrees.push({ mat: m, avant: avant, apres: apres, pieceIdx: pieceIdx, matIdx: i });
     });
   });
@@ -1744,7 +1757,7 @@ function construireSnap() {
   var colors = [];
   pieces.forEach(function (o, pi) {
     var mats = Array.isArray(o.material) ? o.material : [o.material];
-    mats.forEach(function (m, mi) { colors.push([pi, mi, m.color.getHex()]); });
+    mats.forEach(function (m, mi) { colors.push([pi, mi, lireHexSRGB(m)]); });
   });
   var transforms = [];
   scene.updateMatrixWorld(true);
@@ -3839,8 +3852,24 @@ canvas.addEventListener('mousedown', function (evt) {
     return;
   }
 
+  // Onglets COULEUR et MESURES : un simple CLIC (sans glisser) agit directement
+  // (retour utilisateur : "ne permet pas de mettre des couleurs ni de faire
+  // des mesures" - il fallait Ctrl+clic, introuvable). Un glisser orbite
+  // toujours ; le clic n'agit qu'au relachement s'il n'y a pas eu de glisser.
+  if ((mode === MODE.COULEUR || mode === MODE.MESURE) && !ongletBureauCapture) {
+    clicSimpleBureau = { x: evt.clientX, y: evt.clientY };
+  }
   etatSourisOrbite = { x: evt.clientX, y: evt.clientY };
 });
+var clicSimpleBureau = null;
+function agirClicSimpleBureau(evt) {
+  if (!pieces.length) return;
+  var ray = rayonSourisDepuis(evt);
+  var hits = ray.intersectObjects(pieces, false);
+  if (!hits.length) return;
+  if (mode === MODE.COULEUR) remplirPiece(hits[0]);
+  else if (mode === MODE.MESURE) gererClicMesure(hits[0]);
+}
 canvas.addEventListener('auxclick', function (evt) {
   if (modeBureau && evt.button === 1) evt.preventDefault();
 });
@@ -3861,6 +3890,7 @@ window.addEventListener('mousemove', function (evt) {
     majDragBureau(ray.ray.origin, ray.ray.direction);
     return;
   }
+  if (clicSimpleBureau && Math.hypot(evt.clientX - clicSimpleBureau.x, evt.clientY - clicSimpleBureau.y) > 5) clicSimpleBureau = null;   // c'est un glisser
   if (etatSourisOrbite) {
     var dx = evt.clientX - etatSourisOrbite.x, dy = evt.clientY - etatSourisOrbite.y;
     orbite.yaw -= dx * 0.008;
@@ -3868,8 +3898,10 @@ window.addEventListener('mousemove', function (evt) {
     etatSourisOrbite = { x: evt.clientX, y: evt.clientY };
   }
 });
-window.addEventListener('mouseup', function () {
+window.addEventListener('mouseup', function (evt) {
   if (!modeBureau) return;
+  if (clicSimpleBureau && evt.button === 0 && evt.target === canvas) agirClicSimpleBureau(evt);
+  clicSimpleBureau = null;
   if (dragBureau) terminerDragBureau();
   etatSourisOrbite = null;
   etatPanSouris = null;
@@ -4002,7 +4034,10 @@ function majBarreBureau() {
     : 'Ctrl+glisser sur une fleche/anneau (s\'aimante pres de l\'origine)';
   document.getElementById('aideMesure').textContent = modeTelephone
     ? 'Tapoter un 1er point, puis un 2eme : distance reelle affichee (mm)'
-    : 'Ctrl+clic sur un 1er point, puis un 2eme : distance reelle affichee (mm)';
+    : 'Clic sur un 1er point, puis un 2eme : distance reelle affichee (mm)';
+  document.getElementById('aideCouleur').textContent = modeTelephone
+    ? 'Choisis une couleur puis tapote une piece'
+    : 'Choisis une couleur puis clique une piece (toute la piece est coloree)';
 }
 
 // --- Bouton "Voir sur cet ecran (souris)" ---
