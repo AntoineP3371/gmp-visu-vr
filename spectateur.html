@@ -16,6 +16,10 @@
   .etat { margin-left: auto; font-size: 13px; color: #93aab7; display: flex; align-items: center; gap: 8px; }
   .pastille { width: 10px; height: 10px; border-radius: 50%; background: #666; flex: none; }
   .pastille.on { background: #27ae60; }
+  #btnMontrer { background: #16262f; color: #fff; border: 1px solid #294551; border-radius: 8px; padding: 6px 12px; font-size: 13px; font-family: inherit; cursor: pointer; }
+  #btnMontrer:hover { border-color: #3ba7d0; }
+  #btnMontrer.actif { background: #e0a020; border-color: #ffd36b; color: #1a1200; font-weight: 700; }
+  .zone.montre canvas { cursor: crosshair; }
   #selSource { background: #16262f; color: #fff; border: 1px solid #294551; border-radius: 8px; padding: 5px 8px; font-size: 13px; font-family: inherit; }
 
   .zone { flex: 1; position: relative; min-height: 0; background: #0d1219; border: 2px solid #294551; border-radius: 16px; overflow: hidden; }
@@ -38,6 +42,7 @@
   <label id="blocSource" style="display:none; font-size:13px; color:#93aab7;">Casque suivi :
     <select id="selSource"></select>
   </label>
+  <button id="btnMontrer" type="button" title="Pointe une piece : un repere apparait dans le casque. Clic sur la piece = epingler le repere (reclic = le liberer).">Montrer au casque</button>
   <div class="etat"><span class="pastille" id="pastille"></span><span id="etatTxt">Connexion...</span></div>
 </header>
 
@@ -50,7 +55,7 @@
 <footer>
   <a href="index.html">&#8592; Retour a l'accueil</a>
   <span class="sep"></span>
-  <span>Glisser = orbiter &middot; Molette = zoom &middot; Clic molette = translater &middot; Lecture seule, ne peut pas agir sur le modele.</span>
+  <span>Glisser = orbiter &middot; Molette = zoom &middot; Clic molette = translater &middot; Ne peut pas modifier le modele, mais &laquo; Montrer au casque &raquo; pointe une piece a la personne qui le porte.</span>
 </footer>
 
 <script src="three.min.js"></script>
@@ -537,6 +542,102 @@
     try { canal.send({ type: 'broadcast', event: 'join', payload: { ts: Date.now() } }); } catch (e) {}
   }
   setInterval(function () { if (canal && !estActif()) demanderEtat(); }, 6000);
+
+  // ============================ MONTRER AU CASQUE ============================
+  // Le spectateur pointe une piece avec la souris : un repere apparait au meme
+  // endroit dans le casque suivi. Le point est envoye comme "piece n + point
+  // LOCAL a cette piece" (memes indices que les couleurs) : il suit donc la
+  // piece meme si elle bouge, quel que soit le placement du modele dans la
+  // piece du porteur. Clic sur la piece = epingler (le repere reste, meme si
+  // la souris bouge) ; reclic = liberer. Le casque efface le repere s'il ne
+  // recoit plus rien pendant 2 s, d'ou le renvoi regulier ci-dessous.
+  var btnMontrer = document.getElementById('btnMontrer');
+  var elZone = document.getElementById('zone');
+  var montrerActif = false;
+  var pointeur = null;      // { pi, l:[x,y,z] } sous la souris, ou null
+  var epingle = null;       // pointeur fige par un clic, ou null
+  var dernierEnvoiMontre = 0;
+  var _rayMontre = new THREE.Raycaster();
+  var repereSpectateur = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 16, 16),
+    new THREE.MeshBasicMaterial({ color: 0xffc933, depthTest: false, transparent: true, opacity: 0.9 })
+  );
+  repereSpectateur.renderOrder = 50; repereSpectateur.visible = false; scene.add(repereSpectateur);
+
+  function envoyerMontre(p) {
+    if (!canal || !sidActif) return;
+    try {
+      canal.send({ type: 'broadcast', event: 'montre', payload: p ? { sid: sidActif, pi: p.pi, l: p.l } : { sid: sidActif, off: true } });
+    } catch (e) {}
+  }
+  function afficherRepereLocal() {
+    var p = epingle || pointeur;
+    if (!montrerActif || !p || !pieces[p.pi]) { repereSpectateur.visible = false; return; }
+    scene.updateMatrixWorld(true);
+    repereSpectateur.position.copy(pieces[p.pi].localToWorld(new THREE.Vector3(p.l[0], p.l[1], p.l[2])));
+    repereSpectateur.scale.setScalar(Math.max(0.004, orbit.rayon * 0.018));
+    repereSpectateur.visible = true;
+  }
+  function pointeurSousSouris(e) {
+    if (!pieces.length) return null;
+    var r = canvas.getBoundingClientRect();
+    _rayMontre.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), camera);
+    camera.updateMatrixWorld(); scene.updateMatrixWorld(true);
+    var hits = _rayMontre.intersectObjects(pieces, false);
+    if (!hits.length) return null;
+    var h = hits[0], l = h.object.worldToLocal(h.point.clone());
+    return { pi: pieces.indexOf(h.object), l: [l.x, l.y, l.z] };
+  }
+  function arreterMontrer() {
+    if (pointeur || epingle) envoyerMontre(null);
+    pointeur = null; epingle = null; repereSpectateur.visible = false;
+  }
+  btnMontrer.addEventListener('click', function () {
+    montrerActif = !montrerActif;
+    btnMontrer.classList.toggle('actif', montrerActif);
+    btnMontrer.textContent = montrerActif ? 'Montrer au casque : ACTIF' : 'Montrer au casque';
+    elZone.classList.toggle('montre', montrerActif);
+    if (!montrerActif) arreterMontrer();
+  });
+  canvas.addEventListener('mousemove', function (e) {
+    if (!montrerActif || epingle) return;
+    var p = pointeurSousSouris(e);
+    if (!p) { if (pointeur) { pointeur = null; envoyerMontre(null); } afficherRepereLocal(); return; }
+    pointeur = p;
+    afficherRepereLocal();
+    var t = Date.now();
+    if (t - dernierEnvoiMontre > 80) { dernierEnvoiMontre = t; envoyerMontre(p); }
+  });
+  // Clic (sans glisser, sinon c'est une orbite) = epingler / liberer.
+  (function () {
+    var dx0 = 0, dy0 = 0;
+    canvas.addEventListener('mousedown', function (e) { dx0 = e.clientX; dy0 = e.clientY; });
+    canvas.addEventListener('mouseup', function (e) {
+      if (!montrerActif || e.button !== 0) return;
+      if (Math.abs(e.clientX - dx0) > 5 || Math.abs(e.clientY - dy0) > 5) return;
+      if (epingle) { epingle = null; return; }
+      var p = pointeurSousSouris(e);
+      if (p) { epingle = p; pointeur = p; envoyerMontre(p); afficherRepereLocal(); }
+    });
+  })();
+  canvas.addEventListener('mouseleave', function () {
+    if (montrerActif && !epingle && pointeur) { pointeur = null; envoyerMontre(null); afficherRepereLocal(); }
+  });
+  // Renvoi regulier : le casque oublie un repere silencieux depuis 2 s.
+  setInterval(function () {
+    if (!montrerActif) return;
+    var p = epingle || pointeur;
+    if (p) envoyerMontre(p);
+    afficherRepereLocal();
+  }, 500);
+  // Changement de casque suivi : on arrete de montrer a l'ancien.
+  var _sidMontre = null;
+  setInterval(function () {
+    if (sidActif !== _sidMontre) {
+      if (_sidMontre && (pointeur || epingle)) { var s = sidActif; sidActif = _sidMontre; envoyerMontre(null); sidActif = s; }
+      pointeur = null; epingle = null; repereSpectateur.visible = false; _sidMontre = sidActif;
+    }
+  }, 300);
 
   // ============================ RENDU ============================
   majAffichage();

@@ -1535,6 +1535,8 @@ function initDiffusion() {
     canalLive.on('broadcast', { event: 'join' }, function () {
       if (carPret) diffuser('snap', construireSnap());
     });
+    // Le spectateur "montre" un point au porteur du casque (voir plus bas).
+    canalLive.on('broadcast', { event: 'montre' }, function (m) { recevoirMontre(m && m.payload); });
     canalLive.subscribe(function (statut) { diffusionPrete = (statut === 'SUBSCRIBED'); });
   } catch (e) { canalLive = null; diffusionPrete = false; }
 }
@@ -1545,6 +1547,50 @@ function diffuser(evenement, donnees) {
   } catch (e) {}
 }
 initDiffusion();
+
+// ============================================================================
+//  "MONTRER AU CASQUE" (cote casque/telephone) : le spectateur pointe une piece
+//  avec sa souris, un repere apparait au meme endroit ici - anneau + point
+//  traverse-tout (visible meme derriere une piece) + trait vertical pour le
+//  retrouver du regard. Recu comme "piece n (meme indice que les couleurs) +
+//  point local a cette piece" : suit la piece si elle bouge. Disparait si rien
+//  n'est recu pendant 2 s (le spectateur renvoie regulierement tant qu'il montre).
+// ============================================================================
+var montreCible = null;   // { mesh, local: Vector3, vu: ms }
+var marqueurMontre = new THREE.Group(); marqueurMontre.visible = false; scene.add(marqueurMontre);
+(function () {
+  var cv = document.createElement('canvas'); cv.width = cv.height = 128;
+  var c = cv.getContext('2d');
+  c.strokeStyle = '#ffc933'; c.lineWidth = 12; c.beginPath(); c.arc(64, 64, 48, 0, Math.PI * 2); c.stroke();
+  c.strokeStyle = '#ffffff'; c.lineWidth = 4; c.beginPath(); c.arc(64, 64, 58, 0, Math.PI * 2); c.stroke();
+  var anneau = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), depthTest: false, transparent: true }));
+  anneau.scale.set(0.07, 0.07, 1); anneau.renderOrder = 1700;
+  var point = new THREE.Mesh(new THREE.SphereGeometry(0.006, 12, 12), new THREE.MeshBasicMaterial({ color: 0xffc933, depthTest: false }));
+  point.renderOrder = 1701;
+  var trait = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0.14, 0)]),
+    new THREE.LineBasicMaterial({ color: 0xffc933, depthTest: false, transparent: true, opacity: 0.8 }));
+  trait.renderOrder = 1700;
+  marqueurMontre.add(anneau, point, trait);
+})();
+function recevoirMontre(p) {
+  if (!p || p.sid !== SID) return;                 // destine a un autre casque
+  if (!carPret || modeBureau) return;
+  if (p.off) { montreCible = null; return; }
+  var mesh = pieces[p.pi];
+  if (!mesh || !p.l) return;
+  var premiere = !montreCible;
+  montreCible = { mesh: mesh, local: new THREE.Vector3(p.l[0], p.l[1], p.l[2]), vu: performance.now() };
+  // Petite vibration des deux manettes a l'apparition, pour attirer l'attention.
+  if (premiere) controllers.forEach(function (c) { vibrerManette(c, 0.3, 40); });
+}
+function majMarqueurMontre(maintenant) {
+  if (!montreCible || maintenant - montreCible.vu > 2000) { montreCible = null; marqueurMontre.visible = false; return; }
+  scene.updateMatrixWorld(true);
+  marqueurMontre.position.copy(montreCible.mesh.localToWorld(montreCible.local.clone()));
+  marqueurMontre.scale.setScalar(1 + 0.15 * Math.sin(maintenant / 150));
+  marqueurMontre.visible = true;
+}
 
 // Identifiant stable d'un objet manipulable pour le protocole reseau : 'm'
 // pour le modele entier, sinon son index dans piecesMobiles. null = objet
@@ -2521,6 +2567,7 @@ var NOTICE_SECTIONS = [
       'Viser + gachette = valider',
       'Centre du disque = RETOUR (remonte d\'un niveau)',
       'Le laser est toujours visible, ce qu\'il vise se surligne',
+      'Si un spectateur te montre une piece (bouton « Montrer au casque » de l\'ecran spectateur), un anneau jaune + un trait vertical apparaissent dessus, avec une petite vibration',
       'Reclique sur le logo (ou sur ce panneau) pour fermer cette notice'
   ] }
 ];
@@ -3073,6 +3120,7 @@ renderer.setAnimationLoop(function (time, frame) {
   if (grabIdx !== -1) majAimantGrab();
   if (dissocie) majDissocier();
   if (aspiration) majAspiration(time);
+  majMarqueurMontre(performance.now());
   diffuserPoseLiveSiActif(time);
   diffuserPresenceSiActif(time);
   diffuserTeteSiActif(time);
@@ -3250,6 +3298,7 @@ function reinitialiserApresSession() {
   historique = []; refaire = [];
   dragEtat = null;
   dissocie = null; aspiration = null; piecesFines = [];
+  montreCible = null; marqueurMontre.visible = false;
   viderFantome();
   _dernierAimantAxe = null;
   // Fond gris du mode bureau (cf btnBureau) : jamais pertinent en AR/VR, ou
