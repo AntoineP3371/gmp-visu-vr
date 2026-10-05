@@ -407,6 +407,7 @@ function chargerModele(fichier) {
     var carRacine = root;
     while (carRacine.children.length === 1) carRacine = carRacine.children[0];
     piecesMobiles = carRacine.children.slice();
+    racineAssemblage = carRacine;
 
     // Pieces "fines" (outil Dissocier) : chaque piece individuelle d'un
     // assemblage, pas seulement ses sous-ensembles de 1er niveau. Position
@@ -2702,51 +2703,94 @@ function nomPiece(o, i) {
   var n = (o.name || '').replace(/_<[^>]*>$/, '').replace(/_/g, ' ').trim();
   return n || ('Piece ' + (i + 1));
 }
+// La liste se parcourt comme des dossiers (le modele peut avoir des centaines
+// de pieces) : on voit d'abord les sous-ensembles ("dossiers"), un clic ouvre
+// leur contenu, "Retour" remonte. Une piece = un element de piecesFines.
+var listeChemin = [];           // dossiers ouverts, du plus haut au plus bas
+var racineAssemblage = null;    // premier noeud a plusieurs enfants (voir chargerModele)
+function ensemblePiecesFines() { return new Set(piecesFines); }
+function piecesSous(node, ens) {
+  var out = [];
+  node.traverse(function (o) { if (ens.has(o)) out.push(o); });
+  return out;
+}
 function construireEntreesListe() {
-  var groupes = [], index = new Map();
-  piecesFines.forEach(function (f, i) {
-    var oc = f.userData.origineLocale;
-    var asm = (oc && oc.parent) ? trouverPieceRacine(oc.parent) : null;
-    var cle = asm || 'autres';
-    var g = index.get(cle);
-    if (!g) { g = { asm: asm, titre: asm ? nomPiece(asm, 0) : 'Pieces seules', pieces: [], noms: {} }; index.set(cle, g); groupes.push(g); }
-    var nom = nomPiece(f, i);
-    g.noms[nom] = (g.noms[nom] || 0) + 1;
-    g.pieces.push({ f: f, nom: nom, n: g.noms[nom] });
+  var ens = ensemblePiecesFines();
+  var dossier = listeChemin.length ? listeChemin[listeChemin.length - 1] : racineAssemblage;
+  if (!dossier) return [];
+  var entrees = [], noms = {};
+  dossier.children.forEach(function (c, i) {
+    var cur = c;
+    // Groupes d'emballage a enfant unique qui ne sont pas eux-memes une piece : on descend.
+    while (!ens.has(cur) && !cur.isMesh && cur.children.length === 1) cur = cur.children[0];
+    var contenu = ens.has(cur) ? [cur] : piecesSous(cur, ens);
+    if (!contenu.length) return;
+    var nom = nomPiece(cur, i);
+    if (ens.has(cur)) {
+      noms[nom] = (noms[nom] || 0) + 1;
+      entrees.push({ type: 'piece', obj: cur, texte: nom, nom: nom, n: noms[nom] });
+    } else {
+      entrees.push({ type: 'dossier', obj: cur, texte: nom + ' (' + contenu.length + ')', pieces: contenu });
+    }
   });
-  var entrees = [];
-  groupes.forEach(function (g) {
-    entrees.push({ type: 'titre', obj: g.asm, texte: g.titre + ' (' + g.pieces.length + ')' });
-    g.pieces.forEach(function (p) { entrees.push({ type: 'piece', obj: p.f, texte: g.noms[p.nom] > 1 ? p.nom + ' #' + p.n : p.nom }); });
-  });
+  entrees.forEach(function (e) { if (e.type === 'piece' && noms[e.nom] > 1) e.texte = e.nom + ' #' + e.n; });
   return entrees;
 }
-function nbPagesListe() { return Math.max(1, Math.ceil(listeEntrees.length / LIGNES_LISTE)); }
+function nbLignesListe() { return listeEntrees.length + (listeChemin.length ? 1 : 0); }
+function nbPagesListe() { return Math.max(1, Math.ceil(nbLignesListe() / LIGNES_LISTE)); }
+// Une piece est "selectionnee" si elle l'est elle-meme ou si l'un de ses
+// ensembles parents l'est.
+function objetSelectionne(o) {
+  for (var a = o; a; a = a.parent) { if (selection.indexOf(a) !== -1) return true; }
+  return false;
+}
 
 function dessinerListePieces() {
   lctx.clearRect(0, 0, LCV_L, LCV_H);
   lctx.fillStyle = 'rgba(16,20,26,0.97)'; lctx.fillRect(0, 0, LCV_L, LCV_H);
   lctx.strokeStyle = '#2f8fd6'; lctx.lineWidth = 4; lctx.strokeRect(2, 2, LCV_L - 4, LCV_H - 4);
   lctx.textAlign = 'left'; lctx.fillStyle = '#fff'; lctx.font = 'bold 30px sans-serif';
-  lctx.fillText('Pieces - page ' + (listePage + 1) + '/' + nbPagesListe(), 24, 44);
+  var chemin = ['Pieces'].concat(listeChemin.map(function (n, i) { return nomPiece(n, i); })).join(' › ');
+  while (lctx.measureText(chemin + '  ' + (listePage + 1) + '/' + nbPagesListe()).width > 840 && chemin.length > 8) chemin = '…' + chemin.slice(chemin.indexOf('›') + 2);
+  lctx.fillText(chemin + '   ' + (listePage + 1) + '/' + nbPagesListe(), 24, 44);
   lctx.fillStyle = '#9aa5ad'; lctx.font = '16px sans-serif';
-  lctx.fillText('Vise une ligne + gachette = (de)selectionner. ' + selection.length + ' selectionnee(s).', 24, 72);
+  lctx.fillText('Vise une ligne + gachette. Sous-ensemble : ouvrir (›) ou « Selec. ». ' + selection.length + ' selectionnee(s).', 24, 72);
 
   listeZones = [];
-  var debut = listePage * LIGNES_LISTE;
-  listeEntrees.slice(debut, debut + LIGNES_LISTE).forEach(function (e, k) {
-    var y = Y0_LISTE + k * HAUT_LIGNE, sel = !!e.obj && selection.indexOf(e.obj) !== -1;
-    var z = { x: 20, y: y, w: 860, h: HAUT_LIGNE - 6, entree: e, id: listeZones.length };
+  // Ligne "Retour" fixe en tete quand on est dans un sous-ensemble.
+  var lignes = (listeChemin.length ? [{ type: 'retour', texte: '‹  Retour' }] : []).concat(listeEntrees);
+  var parPage = LIGNES_LISTE;
+  var debut = listePage * parPage;
+  lignes.slice(debut, debut + parPage).forEach(function (e, k) {
+    var y = Y0_LISTE + k * HAUT_LIGNE;
+    var nbSel = 0, nbTot = 0;
+    if (e.type === 'piece') { nbTot = 1; nbSel = objetSelectionne(e.obj) ? 1 : 0; }
+    else if (e.type === 'dossier') { nbTot = e.pieces.length; nbSel = e.pieces.filter(objetSelectionne).length; }
+    var sel = nbTot > 0 && nbSel === nbTot, partiel = nbSel > 0 && !sel;
+    var largeur = e.type === 'dossier' ? 730 : 860;
+    var z = { x: 20, y: y, w: largeur, h: HAUT_LIGNE - 6, entree: e, id: listeZones.length };
     listeZones.push(z);
-    lctx.fillStyle = sel ? '#6b5a14' : (e.type === 'titre' ? '#2a3342' : '#1f2630');
+    lctx.fillStyle = sel ? '#6b5a14' : (e.type === 'piece' ? '#1f2630' : '#2a3342');
     lctx.fillRect(z.x, z.y, z.w, z.h);
-    lctx.strokeStyle = (listeHover === z.id) ? '#ffffff' : (sel ? '#ffee00' : '#3a4553');
+    lctx.strokeStyle = (listeHover === z.id) ? '#ffffff' : (sel ? '#ffee00' : (partiel ? '#b39a2d' : '#3a4553'));
     lctx.lineWidth = (listeHover === z.id || sel) ? 4 : 2; lctx.strokeRect(z.x, z.y, z.w, z.h);
-    lctx.fillStyle = e.type === 'titre' ? '#8fd6ff' : '#fff';
-    lctx.font = (e.type === 'titre' ? 'bold ' : '') + '24px sans-serif';
-    var txt = e.texte; while (lctx.measureText(txt).width > z.w - (e.type === 'titre' ? 24 : 54) && txt.length > 4) txt = txt.slice(0, -2);
+    lctx.fillStyle = e.type === 'piece' ? '#fff' : '#8fd6ff';
+    lctx.font = (e.type === 'piece' ? '' : 'bold ') + '24px sans-serif'; lctx.textAlign = 'left';
+    var txt = e.texte, marge = e.type === 'piece' ? 42 : 14;
+    while (lctx.measureText(txt).width > z.w - marge - 40 && txt.length > 4) txt = txt.slice(0, -2);
     if (txt !== e.texte) txt += '…';
-    lctx.fillText(txt, z.x + (e.type === 'titre' ? 12 : 42), z.y + 33);
+    lctx.fillText(txt, z.x + marge, z.y + 33);
+    if (e.type === 'dossier') {
+      lctx.textAlign = 'right'; lctx.fillStyle = '#8fd6ff'; lctx.fillText('›', z.x + z.w - 14, z.y + 33); lctx.textAlign = 'left';
+      // Bouton "Sel." : (de)selectionne tout le contenu du sous-ensemble.
+      var zs = { x: 760, y: y, w: 120, h: HAUT_LIGNE - 6, selDossier: e, id: listeZones.length };
+      listeZones.push(zs);
+      lctx.fillStyle = sel ? '#6b5a14' : '#242c37'; lctx.fillRect(zs.x, zs.y, zs.w, zs.h);
+      lctx.strokeStyle = (listeHover === zs.id) ? '#ffffff' : (sel ? '#ffee00' : (partiel ? '#b39a2d' : '#3a4553'));
+      lctx.lineWidth = (listeHover === zs.id) ? 4 : 2; lctx.strokeRect(zs.x, zs.y, zs.w, zs.h);
+      lctx.fillStyle = '#fff'; lctx.font = 'bold 20px sans-serif'; lctx.textAlign = 'center';
+      lctx.fillText(sel ? 'Retirer' : 'Selec.', zs.x + zs.w / 2, zs.y + 33); lctx.textAlign = 'left';
+    }
   });
 
   var yb = Y0_LISTE + LIGNES_LISTE * HAUT_LIGNE + 14, x = 20;
@@ -2770,16 +2814,36 @@ function zoneListeSousUV(uv) {
   }
   return null;
 }
+// Ajoute/retire des objets a la selection en UNE fois (un seul rafraichissement
+// meme pour un sous-ensemble de dizaines de pieces).
+function majSelectionObjets(aAjouter, aRetirer) {
+  aRetirer.forEach(function (obj) {
+    var i = selection.indexOf(obj);
+    if (i >= 0) { restaurerOpaciteDe([obj]); selection.splice(i, 1); }
+  });
+  aAjouter.forEach(function (obj) {
+    if (selection.indexOf(obj) !== -1) return;
+    for (var a = obj.parent; a; a = a.parent) { if (selection.indexOf(a) !== -1) return; }   // deja couvert
+    selection.push(obj);
+  });
+  surlignerSelection(); reconstruireCible(); majPanneau();
+}
 function basculerSelectionObjet(obj) {
   if (!obj) return;
-  var i = selection.indexOf(obj);
-  if (i >= 0) { restaurerOpaciteDe([obj]); selection.splice(i, 1); }
-  else {
-    // Deja couvert par un sous-ensemble selectionne : rien a ajouter.
-    for (var a = obj.parent; a; a = a.parent) { if (selection.indexOf(a) !== -1) return; }
-    selection.push(obj);
+  if (selection.indexOf(obj) !== -1) majSelectionObjets([], [obj]);
+  else majSelectionObjets([obj], []);
+}
+// Un sous-ensemble de 1er niveau (piecesMobiles) se selectionne comme UN objet
+// (comme A + gachette) ; un sous-ensemble plus profond = toutes ses pieces.
+function basculerSelectionDossier(e) {
+  var tout = e.pieces.every(objetSelectionne);
+  if (piecesMobiles.indexOf(e.obj) !== -1) {
+    if (selection.indexOf(e.obj) !== -1) majSelectionObjets([], [e.obj]);
+    else if (tout) majSelectionObjets([], e.pieces);     // tout etait choisi piece par piece
+    else majSelectionObjets([e.obj], []);
+    return;
   }
-  surlignerSelection(); reconstruireCible(); majPanneau();
+  if (tout) majSelectionObjets([], e.pieces); else majSelectionObjets(e.pieces, []);
 }
 function cliquerListePieces(uv) {
   var z = zoneListeSousUV(uv); if (!z) return;
@@ -2789,13 +2853,19 @@ function cliquerListePieces(uv) {
   else if (z.act === 'p5') listePage = Math.max(0, listePage - 5);
   else if (z.act === 's5') listePage = Math.min(nbPagesListe() - 1, listePage + 5);
   else if (z.act === 'tout') desactiverSelectionAB();
-  else if (z.entree) basculerSelectionObjet(z.entree.obj);
+  else if (z.selDossier) basculerSelectionDossier(z.selDossier);
+  else if (z.entree) {
+    var e = z.entree;
+    if (e.type === 'retour') { listeChemin.pop(); listeEntrees = construireEntreesListe(); listePage = 0; }
+    else if (e.type === 'dossier') { listeChemin.push(e.obj); listeEntrees = construireEntreesListe(); listePage = 0; }
+    else basculerSelectionObjet(e.obj);
+  }
   dessinerListePieces();
 }
 function ouvrirListePieces() {
   if (listePiecesMesh) { fermerListePieces(); return; }
   if (!piecesFines.length) return;
-  listeEntrees = construireEntreesListe(); listePage = 0; listeHover = -1;
+  listeChemin = []; listeEntrees = construireEntreesListe(); listePage = 0; listeHover = -1;
   dessinerListePieces();
   var largeur = 0.55, hauteur = largeur * (LCV_H / LCV_L);
   listePiecesMesh = new THREE.Mesh(
