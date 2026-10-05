@@ -91,19 +91,33 @@ function configDriveValide(cle) {
 // Ignore silencieusement toute erreur (cle pas encore configuree, pas de
 // reseau, dossier mal partage...) : la liste locale reste toujours
 // disponible independamment de Drive.
+// Avant, un echec Drive (reseau, cle, quota...) etait totalement silencieux :
+// il ne restait que le modele local, sans aucun indice - on affiche donc une
+// petite note sous la liste (la liste locale reste disponible quoi qu'il arrive).
+var noteDriveEl = document.createElement('div');
+noteDriveEl.style.cssText = 'font-size:.75rem;color:var(--muted);line-height:1.4;';
+listeModelesEl.parentNode.appendChild(noteDriveEl);
 function chargerListeDrive() {
   if (!configDriveValide('apiKey') || !configDriveValide('folderId')) return Promise.resolve();
   var cfg = window.DRIVE_CONFIG;
   var q = encodeURIComponent("'" + cfg.folderId + "' in parents and trashed=false");
   var url = 'https://www.googleapis.com/drive/v3/files?q=' + q +
-    '&key=' + encodeURIComponent(cfg.apiKey) + '&fields=files(id,name)&pageSize=200';
+    '&key=' + encodeURIComponent(cfg.apiKey) + '&fields=files(id,name,mimeType)&pageSize=200';
   return fetch(url).then(function (r) { return r.json(); }).then(function (data) {
-    (data.files || []).filter(function (f) { return /\.glb$/i.test(f.name); }).forEach(function (f) {
+    if (data.error) throw new Error(data.error.message || 'erreur Google Drive');
+    // Un modele est un .glb OU un fichier que Drive reconnait comme glTF binaire
+    // (un fichier renomme sans extension, ex. "Boy de volet", n'apparaissait pas).
+    (data.files || []).filter(function (f) {
+      return /\.glb$/i.test(f.name) || /gltf-binary/i.test(f.mimeType || '');
+    }).forEach(function (f) {
       var urlModele = 'https://www.googleapis.com/drive/v3/files/' + f.id +
         '?alt=media&key=' + encodeURIComponent(cfg.apiKey);
       ajouterOptionModele(f.name.replace(/\.glb$/i, '') + ' (Drive)', urlModele);
     });
-  }).catch(function () {});
+  }).catch(function (e) {
+    noteDriveEl.textContent = 'Liste Google Drive indisponible (' + (e && e.message ? e.message : e) +
+      ') - seuls les modeles locaux sont affiches.';
+  });
 }
 
 Promise.all([
