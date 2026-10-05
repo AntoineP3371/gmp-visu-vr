@@ -478,14 +478,17 @@ function surlignerSelection() {
     mats.forEach(function (mat) { if (mat.emissive) mat.emissive.setHex(0x000000); });
   });
   piecesSurlignees = [];
+  // Teinte ambre plus marquee qu'avant (0x554400 se voyait a peine) : la piece
+  // choisie doit ressortir nettement, y compris depuis la liste des pieces.
   selection.forEach(function (piece) {
     piece.traverse(function (o) {
       if (!o.isMesh) return;
       var mats = Array.isArray(o.material) ? o.material : [o.material];
-      mats.forEach(function (mat) { if (mat.emissive) mat.emissive.setHex(0x554400); });
+      mats.forEach(function (mat) { if (mat.emissive) mat.emissive.setHex(0x9a6a00); });
       piecesSurlignees.push(o);
     });
   });
+  reappliquerIsolation();
 }
 
 function restaurerOpaciteDe(pieces_) {
@@ -536,6 +539,55 @@ function ajusterNiveauTransparence(etat, axisValue, dt, appliquer) {
 // pieces choisies avancent forcement ensemble (meme increment chaque
 // frame), donc un seul etat suffit - pas de risque de desync entre elles.
 var etatTranspSelection = { niveauTransp: 0 };
+
+// ISOLATION de la selection : gachette tenue + joystick vers le HAUT rend
+// transparent "tout le reste" (toutes les pieces non selectionnees),
+// progressivement ; joystick vers le BAS = la piece selectionnee elle-meme
+// devient transparente ; un clic de joystick reaffiche tout (cf
+// pollAppelRoue). 0 = rien de masque, 100 = reste invisible.
+var niveauAutres = 0;
+function appliquerOpaciteAutres() {
+  var op = 1 - niveauAutres / 100;
+  pieces.forEach(function (m) {
+    if (estSelectionnee(m)) return;
+    var mats = Array.isArray(m.material) ? m.material : [m.material];
+    mats.forEach(function (mm) { mm.transparent = true; mm.opacity = op; });
+  });
+}
+// Quand la selection change pendant que "le reste" est masque : les pieces
+// nouvellement choisies redeviennent visibles, les anciennes s'estompent.
+function reappliquerIsolation() {
+  if (niveauAutres <= 0) return;
+  if (!selection.length) { reafficherTout(); return; }   // plus rien de choisi : tout redevient visible
+  var opSel = 1 - etatTranspSelection.niveauTransp / 100;
+  pieces.forEach(function (m) {
+    if (!estSelectionnee(m)) return;
+    var mats = Array.isArray(m.material) ? m.material : [m.material];
+    mats.forEach(function (mm) { mm.transparent = true; mm.opacity = opSel; });
+  });
+  appliquerOpaciteAutres();
+}
+function ajusterIsolation(valeur, dt) {
+  niveauAutres = Math.max(0, Math.min(100, niveauAutres + valeur * VITESSE_TRANSP * dt));
+  appliquerOpaciteAutres();
+  return Math.round(100 - niveauAutres) + ' %';
+}
+function transparenceActive() {
+  if (niveauAutres > 0 || etatTranspSelection.niveauTransp > 0) return true;
+  return piecesMobiles.concat(piecesFines).some(function (p) { return p.userData.niveauTransp > 0; });
+}
+// "Re-afficher tout" : opacite 1 partout, tous les reglages de transparence
+// remis a zero.
+function reafficherTout() {
+  niveauAutres = 0;
+  pieces.forEach(function (m) {
+    var mats = Array.isArray(m.material) ? m.material : [m.material];
+    mats.forEach(function (mm) { mm.opacity = 1; mm.transparent = false; });
+  });
+  piecesMobiles.concat(piecesFines).forEach(function (p) { p.userData.niveauTransp = 0; });
+  etatTranspSelection = { niveauTransp: 0 };
+  spriteTransp.visible = false;
+}
 
 // Etiquette flottante "NN %", ancree AU-DESSUS de la piece en cours de
 // reglage, visible seulement pendant l'ajustement actif (contrairement a
@@ -620,7 +672,7 @@ function desactiverSelectionAB() {
   // (et on enregistre le deplacement pour Annuler) AVANT de la detruire.
   if (grabIdx !== -1) terminerGrab();
   restaurerOpaciteDe(selection);
-  etatTranspSelection = { niveauTransp: 0 };
+  reafficherTout();               // plus rien de selectionne : on ne masque plus "le reste"
   selection = [];
   surlignerSelection();
   relacherSelection();
@@ -2583,7 +2635,8 @@ var NOTICE_SECTIONS = [
       'Manuel : choisis une couleur puis vise la piece + gachette',
       'RAZ couleurs : remet les couleurs d\'origine',
       'Transparence (selection) : A tenu + joystick haut/bas',
-      'Transparence (piece visee) : gachette tenue + joystick haut/bas'
+      'Transparence (piece visee) : gachette tenue + joystick haut/bas',
+      'Isoler une piece : selectionne-la (menu Pieces), garde la gachette, joystick HAUT = le reste devient transparent, BAS = la piece devient transparente ; clic joystick = tout reafficher'
   ] },
   { titre: 'Mesures', couleur: '#0f6e56', lignes: [
       'Nouvelle mesure : vise un 1er point puis un 2e + gachette',
@@ -3074,7 +3127,13 @@ function boutonAppuye(ctrl, index) {
 function pollAppelRoue() {
   controllers.forEach(function (ctrl, i) {
     var pressed = boutonAppuye(ctrl, 3);
-    if (pressed && !summonPrev[i] && menuCtrlIdx !== i) {
+    // Clic de joystick : s'il y a de la transparence/isolation en cours, il
+    // "re-affiche tout" (priorite) ; sinon il garde son role d'avant (deplacer
+    // le menu sur cette main).
+    if (pressed && !summonPrev[i] && transparenceActive()) {
+      reafficherTout();
+      afficherIndicateurAction('TOUT REAFFICHE', '');
+    } else if (pressed && !summonPrev[i] && menuCtrlIdx !== i) {
       menuCtrlIdx = i;
       ctrl.add(roue);
       roue.position.set(0, 0.06, -0.04);
@@ -3457,6 +3516,18 @@ renderer.setAnimationLoop(function (time, frame) {
             transpAffichee = true;
           }
         }
+      } else if (selection.length && selectTenu[ci]) {
+        // Selection active + gachette tenue : joystick HAUT = masque "le reste"
+        // (progressivement), joystick BAS = rend la piece choisie transparente.
+        // (axes[3] : -1 en haut, +1 en bas sur les manettes Quest.)
+        var tIso = (gp && gp.axes && gp.axes.length > 3) ? (gp.axes[3] || 0) : 0;
+        if (Math.abs(tIso) > 0.08) {
+          var texteIso, ancre = selection[0];
+          if (tIso < 0) texteIso = 'Reste ' + ajusterIsolation(-tIso, dt);
+          else texteIso = ajusterNiveauTransparence(etatTranspSelection, tIso, dt, appliquerTransparenceSelection);
+          afficherLabelTransparence(ancre, texteIso);
+          transpAffichee = true;
+        }
       } else if (selectTenu[ci] && ctrl.userData.pieceLaser) {
         var tLaser = (gp && gp.axes && gp.axes.length > 3) ? (gp.axes[3] || 0) : 0;
         if (Math.abs(tLaser) > 0.08) {
@@ -3554,6 +3625,7 @@ function reinitialiserApresSession() {
   objetSurvolePrecedent = [null, null];
   idHoverRoue = null;
   etatTranspSelection = { niveauTransp: 0 };
+  niveauAutres = 0;
   spriteTransp.visible = false;
 
   // Historique Annuler/Refaire et aimantation : sans ca, changer de modele
