@@ -1,4 +1,4 @@
-# Visionneuse CAO en réalité mixte — v1.20.0
+# Visionneuse CAO en réalité mixte — v1.21.0
 
 Application WebXR pour Meta Quest 3 : pose n'importe quel modèle 3D (issu
 d'une modélisation 3DEXPERIENCE) sur une vraie table, manipule-le à main
@@ -67,6 +67,7 @@ gâchette.
 | Déplacer la sélection à main levée ou précisément | Relâche A si besoin : **la sélection reste active**, grip ou gizmo agissent dessus normalement |
 | Régler la transparence de la sélection | **A tenu**, pousse le **joystick** haut/bas - un pourcentage (100 % opaque → 0 % transparent) s'affiche en direct au-dessus de la pièce. **Le réglage reste tel quel quand tu relâches** le joystick ou la gâchette - pousse dans l'autre sens pour ré-opacifier |
 | **Régler la transparence d'une pièce visée**, sans la sélectionner d'abord | Vise-la au laser (**gâchette tenue**), pousse le **joystick** haut/bas - même comportement (pourcentage, ça reste) |
+| **Dissocier une pièce de l'assemblage** (menu Déplacements > **Dissocier**) | Vise **une pièce précise** (pas son sous-ensemble), maintiens la **gâchette** : elle se sépare et suit ta main. En l'approchant de sa place initiale (≈ 12 cm), **un fantôme bleu** apparaît à cet endroit ; **relâche la gâchette** : la pièce est **aspirée** dans sa place (petite animation + vibration). Plus loin, elle reste là où tu l'as lâchée. Annuler/Refaire et RAZ générale la gèrent ; l'écran spectateur la suit aussi. Casque/téléphone uniquement (pas en mode souris) |
 | **Revenir à « tout le modèle »** | Bouton **« Libre »** (menu Déplacements) - désélectionne et repasse en déplacement libre |
 | **Zoomer** (avant/arrière, sur tout le modèle) | Maintiens le **grip des 2 manettes en même temps** - le % s'affiche en direct entre les 2 mains, et « s'aimante » sur 50/75/100/125/150/200% |
 | **Montrer/pointer quelque chose** | Maintiens la **gâchette appuyée** : un laser rouge s'arrête sur la pièce visée |
@@ -338,8 +339,11 @@ pas besoin de créer un nouveau compte :
 
 ### Limites connues de cette v1
 
-- Un seul « acteur » affiché à la fois côté spectateur (celui qui vient
-  d'émettre) - pas de galerie multi-casques comme sur VR CEC.
+- Un seul « acteur » affiché à la fois côté spectateur - pas de galerie
+  multi-casques comme sur VR CEC. **L'écran reste figé sur le premier casque
+  vu** : quand plusieurs casques sont actifs (modèles différents), une liste
+  **« Casque suivi »** apparaît en haut pour choisir lequel regarder. Il ne
+  bascule de lui-même que si le casque suivi se tait plus de 30 secondes.
 - Le spectateur a sa **propre caméra libre** (glisser = orbiter, molette =
   zoom, **clic molette maintenu = translater la vue**), ce n'est PAS la vue
   à travers les yeux du casque - à la place, un **avatar Meta Quest 3 en 3D**

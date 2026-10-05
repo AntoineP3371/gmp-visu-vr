@@ -394,6 +394,19 @@ function chargerModele(fichier) {
     while (carRacine.children.length === 1) carRacine = carRacine.children[0];
     piecesMobiles = carRacine.children.slice();
 
+    // Pieces "fines" (outil Dissocier) : chaque piece individuelle d'un
+    // assemblage, pas seulement ses sous-ensembles de 1er niveau. Position
+    // d'origine = LOCALE a son parent (sa place DANS l'assemblage, qui la
+    // suit meme si l'assemblage est deplace ensuite).
+    piecesFines = [];
+    pieces.forEach(function (m) {
+      var f = pieceFineDe(m);
+      if (piecesFines.indexOf(f) === -1) piecesFines.push(f);
+    });
+    piecesFines.forEach(function (f) {
+      f.userData.origineLocale = { parent: f.parent, pos: f.position.clone(), quat: f.quaternion.clone(), scale: f.scale.clone() };
+    });
+
     pivot.updateMatrixWorld(true);
     capturerOrigine(pivot);
 
@@ -441,7 +454,7 @@ function objetsCiblesActuels() {
 // l'historique Annuler/Refaire couvre ce deplacement silencieux.
 function objetsPourUndoAimant() {
   var base = objetsCiblesActuels();
-  return cibleCourante() === pivot ? base.concat(piecesMobiles) : base;
+  return cibleCourante() === pivot ? base.concat(piecesMobiles, piecesSeparees()) : base;
 }
 
 function surlignerSelection() {
@@ -594,6 +607,47 @@ function revenirLibre() {
   definirMode(MODE.LIBRE);
 }
 
+// ============================================================================
+//  PIECES FINES (outil Dissocier) : une "piece" = le noeud qui porte un mesh
+//  (dans un export STEP->GLB, un Groupe a un seul enfant mesh), ou le mesh
+//  lui-meme sinon. Meme regle recopiee dans spectateur.html : les indices
+//  doivent rester alignes entre emetteur et recepteur.
+// ============================================================================
+var piecesFines = [];
+function pieceFineDe(mesh) {
+  var p = mesh.parent;
+  return (p && p !== racineModele && p.children.length === 1) ? p : mesh;
+}
+// Une piece de 1er niveau (piecesMobiles) peut avoir change de parent (selection
+// A+gachette -> pivotSelection/pivot) : sa place "locale" n'est alors plus
+// exploitable, et c'est deja piecesMobiles/RAZ generale qui s'en occupe.
+function origineLocaleValide(f) {
+  var o = f.userData.origineLocale;
+  return !!o && f.parent === o.parent;
+}
+function estSepareeDeSaPlace(f) {
+  if (!origineLocaleValide(f)) return false;
+  var o = f.userData.origineLocale;
+  return f.position.distanceToSquared(o.pos) > 1e-10 || f.quaternion.angleTo(o.quat) > 1e-4 || f.scale.distanceToSquared(o.scale) > 1e-10;
+}
+// Seulement les pieces actuellement ecartees de leur place : c'est ce qu'il
+// faut remettre en place/capturer pour Annuler (inutile de trainer toutes
+// les pieces de l'assemblage a chaque geste).
+function piecesSeparees() { return piecesFines.filter(estSepareeDeSaPlace); }
+function remettreEnPlaceLocale(f) {
+  if (!origineLocaleValide(f)) return;
+  var o = f.userData.origineLocale;
+  f.position.copy(o.pos); f.quaternion.copy(o.quat); f.scale.copy(o.scale);
+}
+// Matrice MONDE de la place d'une piece dans l'assemblage, ou elle qu'elle
+// soit actuellement (suit l'assemblage s'il a ete deplace).
+function matricePlaceMonde(f) {
+  scene.updateMatrixWorld(true);
+  var o = f.userData.origineLocale;
+  if (f.userData.matriceRelPivotOrigine) return pivot.matrixWorld.clone().multiply(f.userData.matriceRelPivotOrigine);
+  return o.parent.matrixWorld.clone().multiply(new THREE.Matrix4().compose(o.pos, o.quat, o.scale));
+}
+
 function trouverPieceRacine(mesh) {
   var o = mesh;
   while (o) {
@@ -658,7 +712,7 @@ function resetAxeTranslation(lettre) {
 // a resetTout(), qui ne touche que la cible actuellement selectionnee).
 function razGenerale() {
   if (!racineModele) return;
-  var objets = [racineModele].concat(piecesMobiles);
+  var objets = [racineModele].concat(piecesMobiles, piecesSeparees());
   var avant = capturerMatricesMonde(objets);
 
   desactiverSelectionAB();
@@ -669,6 +723,7 @@ function razGenerale() {
     var mondeCible = pivot.matrixWorld.clone().multiply(p.userData.matriceRelPivotOrigine);
     definirMatriceMonde(p, mondeCible);
   });
+  objets.forEach(function (o) { if (o.userData.origineLocale) remettreEnPlaceLocale(o); });
 
   var apres = capturerMatricesMonde(objets);
   enregistrerTransformSiChange(objets, avant, apres);
@@ -687,6 +742,9 @@ function restaurerPiecesMobilesSiPivot(c) {
     var mondeCible = pivot.matrixWorld.clone().multiply(p.userData.matriceRelPivotOrigine);
     definirMatriceMonde(p, mondeCible);
   });
+  // Pieces dissociees (outil Dissocier) : leur place est locale a leur
+  // assemblage, deja remis en place juste au-dessus.
+  piecesSeparees().forEach(remettreEnPlaceLocale);
 }
 function resetAxeRotation(lettre) {
   var c = cibleCourante(); if (!c || !c.userData.origine) return;
@@ -985,6 +1043,97 @@ function verifierAimantLibreSouris(c) {
     fantomeGroupe.visible = true;
   } else { viderFantome(); }
   if (ecart < SEUIL_AIMANT_POS) { c.position.copy(c.userData.origine.pos); fantomeGroupe.visible = false; restaurerPiecesMobilesSiPivot(c); }
+}
+
+// ============================================================================
+//  OUTIL DISSOCIER : en visant une piece (la plus fine : un seul solide, pas
+//  son sous-ensemble) et en tenant la GACHETTE, on la separe de l'assemblage
+//  et elle suit la main. En approchant sa place initiale, celle-ci s'affiche
+//  en fantome ; au RELACHEMENT de la gachette, la piece est ASPIREE dans sa
+//  place (petite animation + vibration). Plus loin que SEUIL_DISSOCIER, elle
+//  reste simplement la ou on l'a lachee. Annuler/Refaire couvre le geste.
+// ============================================================================
+var SEUIL_DISSOCIER = 0.12;      // m (entre centres) : fantome visible ET aspiration au relachement
+var DUREE_ASPIRATION = 250;      // ms
+var dissocie = null;             // { idx, piece, parentAvant, avant, centreLocal, proche }
+var aspiration = null;           // { piece, idx, depuis, vers, t0, avant }
+
+function distanceAPlace(d, place) {
+  var f = d.piece;
+  var centreMonde = f.localToWorld(d.centreLocal.clone());
+  var centrePlace = d.centreLocal.clone().applyMatrix4(place);
+  return centreMonde.distanceTo(centrePlace);
+}
+function demarrerDissocier(idx, ctrl, ray) {
+  if (dissocie) return;
+  if (aspiration) terminerAspiration();
+  var hits = ray.intersectObjects(pieces, false);
+  if (!hits.length) return;
+  var f = pieceFineDe(hits[0].object);
+  if (!f.userData.origineLocale && !f.userData.matriceRelPivotOrigine) return;
+  scene.updateMatrixWorld(true);
+  var centre = new THREE.Box3().setFromObject(f).getCenter(new THREE.Vector3());
+  dissocie = {
+    idx: idx, piece: f, parentAvant: f.parent,
+    avant: capturerMatricesMonde([f]),
+    centreLocal: f.worldToLocal(centre), proche: false
+  };
+  ctrl.attach(f);
+  construireFantome(f, [f]);
+  fantomeGroupe.visible = false;
+}
+function majDissocier() {
+  if (!dissocie) return;
+  var place = matricePlaceMonde(dissocie.piece);
+  var proche = distanceAPlace(dissocie, place) < SEUIL_DISSOCIER;
+  if (proche) positionnerFantome(place);
+  fantomeGroupe.visible = proche;
+  if (proche && !dissocie.proche) vibrerManette(controllers[dissocie.idx], 0.25, 30);
+  dissocie.proche = proche;
+}
+function terminerDissocier() {
+  if (!dissocie) return;
+  var d = dissocie;
+  dissocie = null;
+  viderFantome();
+  var f = d.piece;
+  d.parentAvant.attach(f);          // rend la piece a son parent sans la bouger
+  scene.updateMatrixWorld(true);
+  var place = matricePlaceMonde(f);
+  var centre = f.localToWorld(d.centreLocal.clone());
+  if (centre.distanceTo(d.centreLocal.clone().applyMatrix4(place)) < SEUIL_DISSOCIER) {
+    // Cible exprimee dans le repere du parent ACTUEL, puis animee en local.
+    var cible = f.parent.matrixWorld.clone().invert().multiply(place);
+    var vers = { pos: new THREE.Vector3(), quat: new THREE.Quaternion(), scale: new THREE.Vector3() };
+    cible.decompose(vers.pos, vers.quat, vers.scale);
+    aspiration = {
+      piece: f, idx: d.idx, avant: d.avant, t0: performance.now(), vers: vers,
+      depuis: { pos: f.position.clone(), quat: f.quaternion.clone(), scale: f.scale.clone() }
+    };
+  } else {
+    var apres = capturerMatricesMonde([f]);
+    enregistrerTransformSiChange([f], d.avant, apres);
+  }
+}
+function majAspiration(maintenant) {
+  if (!aspiration) return;
+  var a = aspiration;
+  var t = Math.min(1, (maintenant - a.t0) / DUREE_ASPIRATION);
+  var e = 1 - Math.pow(1 - t, 3);   // ralentit en arrivant
+  a.piece.position.lerpVectors(a.depuis.pos, a.vers.pos, e);
+  a.piece.quaternion.copy(a.depuis.quat).slerp(a.vers.quat, e);
+  a.piece.scale.lerpVectors(a.depuis.scale, a.vers.scale, e);
+  if (t >= 1) terminerAspiration();
+}
+function terminerAspiration() {
+  if (!aspiration) return;
+  var a = aspiration;
+  aspiration = null;
+  a.piece.position.copy(a.vers.pos); a.piece.quaternion.copy(a.vers.quat); a.piece.scale.copy(a.vers.scale);
+  remettreEnPlaceLocale(a.piece);   // valeur exacte d'origine quand la place est locale
+  var apres = capturerMatricesMonde([a.piece]);
+  enregistrerTransformSiChange([a.piece], a.avant, apres);
+  vibrerManette(controllers[a.idx], 0.8, 80);
 }
 
 function majZoom() {
@@ -1389,7 +1538,9 @@ initDiffusion();
 function idDeObjet(o) {
   if (o === racineModele) return 'm';
   var i = piecesMobiles.indexOf(o);
-  return i === -1 ? null : i;
+  if (i !== -1) return i;
+  var j = piecesFines.indexOf(o);          // piece dissociee : 'f' + index
+  return j === -1 ? null : 'f' + j;
 }
 
 // Une matrice monde brute inclut le placement AR sur la table (anchor),
@@ -1452,6 +1603,8 @@ function construireSnap() {
   scene.updateMatrixWorld(true);
   if (racineModele) transforms.push(['m', matriceRelativeAncre(racineModele.matrixWorld).toArray()]);
   piecesMobiles.forEach(function (o, i) { transforms.push([i, matriceRelativeModele(o.matrixWorld).toArray()]); });
+  // Pieces dissociees (apres les pieces de 1er niveau : leur parent d'abord).
+  piecesSeparees().forEach(function (o) { transforms.push([idDeObjet(o), matriceRelativeModele(o.matrixWorld).toArray()]); });
   return {
     sid: SID, modele: fichierModeleCourant, nom: nomModeleCourant,
     colors: colors, transforms: transforms, echelle: pivot.scale.x
@@ -1463,10 +1616,11 @@ function construireSnap() {
 // ~10 Hz pour un rendu fluide cote spectateur sans saturer le reseau.
 var dernierePoseLiveEnvoi = 0;
 function diffuserPoseLiveSiActif(t) {
-  if (!dragEtat && grabIdx === -1) return;
+  var pieceDissociee = dissocie ? dissocie.piece : (aspiration ? aspiration.piece : null);
+  if (!dragEtat && grabIdx === -1 && !pieceDissociee) return;
   if (t - dernierePoseLiveEnvoi < 90) return;
   dernierePoseLiveEnvoi = t;
-  var objets = objetsCiblesActuels();
+  var objets = pieceDissociee ? [pieceDissociee] : objetsCiblesActuels();
   if (!objets.length) return;
   var mats = capturerMatricesMonde(objets);
   var obj = [], m = [];
@@ -1534,10 +1688,11 @@ function diffuserLaserEtat(idx, ray) {
 // ============================================================================
 //  MODE (comment on manipule la cible courante)
 // ============================================================================
-var MODE = { LIBRE: 'libre', GIZMO_T: 'gizmo-t', GIZMO_R: 'gizmo-r', COULEUR: 'couleur', MESURE: 'mesure' };
+var MODE = { LIBRE: 'libre', GIZMO_T: 'gizmo-t', GIZMO_R: 'gizmo-r', COULEUR: 'couleur', MESURE: 'mesure', DISSOCIER: 'dissocier' };
 var mode = MODE.LIBRE;
 
 function definirMode(m) {
+  terminerDissocier();   // une piece tenue est rendue proprement si on change d'outil
   mode = m;
   dragEtat = null;
   viderFantome();
@@ -1976,6 +2131,7 @@ var MENU_RACINE = [
   ] },
   { label: 'Deplacements', icone: 'deplacer', accent: '#185fa5', sub: [
       { label: 'Libre', icone: 'deplacer', action: revenirLibre },
+      { label: 'Dissocier', icone: 'dissocier', action: function () { definirMode(MODE.DISSOCIER); } },
       { label: 'Precis', icone: 'cible', sub: [
           { label: 'Translation', icone: 'flechedouble', action: function () { definirMode(MODE.GIZMO_T); } },
           { label: 'Rotation',    icone: 'reset',        action: function () { definirMode(MODE.GIZMO_R); } }
@@ -2102,6 +2258,7 @@ function estActifRoue(node) {
   if (node.mesureId !== undefined) return node.mesureId === mesureActiveId;
   switch (node.label) {
     case 'Libre':                  return mode === MODE.LIBRE;
+    case 'Dissocier':              return mode === MODE.DISSOCIER;
     case 'Translation':          return mode === MODE.GIZMO_T;
     case 'Rotation':              return mode === MODE.GIZMO_R;
     case 'Manuel':                 return mode === MODE.COULEUR;
@@ -2195,6 +2352,16 @@ function dessinerIcone(cle, cx, cy, s) {
     rctx.moveTo(cx - s * 0.6, cy + s * 0.4); rctx.lineTo(cx - s * 0.1, cy - s * 0.1);
     rctx.lineTo(cx + s * 0.2, cy + s * 0.15); rctx.lineTo(cx + s * 0.6, cy - s * 0.25); rctx.lineTo(cx + s * 0.6, cy + s * 0.4);
     rctx.closePath(); rctx.stroke();
+  } else if (cle === 'dissocier') {
+    // Bloc (assemblage) avec une encoche, et la piece qui en sort vers le haut-droite.
+    rctx.beginPath();
+    rctx.moveTo(cx - s * 0.8, cy - s * 0.1); rctx.lineTo(cx - s * 0.8, cy + s * 0.7);
+    rctx.lineTo(cx + s * 0.3, cy + s * 0.7); rctx.lineTo(cx + s * 0.3, cy + s * 0.35);
+    rctx.stroke();
+    rctx.beginPath();
+    rctx.moveTo(cx - s * 0.8, cy - s * 0.1); rctx.lineTo(cx - s * 0.25, cy - s * 0.1);
+    rctx.stroke();
+    rctx.strokeRect(cx + s * 0.1, cy - s * 0.75, s * 0.65, s * 0.65);
   }
   rctx.restore();
 }
@@ -2305,6 +2472,7 @@ var NOTICE_SECTIONS = [
       'Attraper a main levee : Grip',
       'Choisir une/des piece(s) : A + gachette sur chaque',
       'Revenir au modele entier : bouton Libre',
+      'Dissocier une piece : outil Dissocier, vise une piece, tiens la gachette et bouge la main ; pres de sa place un fantome apparait, relache = elle est aspiree',
       'Deplacer precisement : viser fleche/anneau + gachette',
       'Remettre a l\'origine : bouton RAZ rouge (un axe) ou RAZ generale (tout), ou approche = aimantation automatique',
       'Deplacer le centre de rotation : viser un point + gachette',
@@ -2538,6 +2706,8 @@ function gererSelectStart(idx, ctrl) {
     }
     return;
   }
+
+  if (mode === MODE.DISSOCIER && pieces.length) { demarrerDissocier(idx, ctrl, ray); return; }
 
   if (mode === MODE.COULEUR && pieces.length) {
     var hitsModele2 = ray.intersectObjects(pieces, false);
@@ -2807,6 +2977,7 @@ controllers.forEach(function (ctrl, idx) {
   ctrl.addEventListener('selectend', function () {
     selectTenu[idx] = false;
     if (modeTelephone && grabIdx === idx) terminerGrab();
+    if (dissocie && dissocie.idx === idx) terminerDissocier();
     if (dragEtat && dragEtat.idx === idx) {
       var apres = capturerMatricesMonde(dragEtat.objets);
       enregistrerTransformSiChange(dragEtat.objets, dragEtat.avant, apres);
@@ -2886,6 +3057,8 @@ renderer.setAnimationLoop(function (time, frame) {
   if (modeZoom) majZoom();
   if (dragEtat) { if (dragEtat.mode === 'translate') majDragTranslate(); else majDragRotate(); }
   if (grabIdx !== -1) majAimantGrab();
+  if (dissocie) majDissocier();
+  if (aspiration) majAspiration(time);
   diffuserPoseLiveSiActif(time);
   diffuserPresenceSiActif(time);
   diffuserTeteSiActif(time);
@@ -3062,6 +3235,7 @@ function reinitialiserApresSession() {
   // cache de construireFantomeSiBesoin().
   historique = []; refaire = [];
   dragEtat = null;
+  dissocie = null; aspiration = null; piecesFines = [];
   viderFantome();
   _dernierAimantAxe = null;
   // Fond gris du mode bureau (cf btnBureau) : jamais pertinent en AR/VR, ou

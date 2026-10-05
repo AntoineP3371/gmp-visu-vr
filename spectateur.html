@@ -16,6 +16,7 @@
   .etat { margin-left: auto; font-size: 13px; color: #93aab7; display: flex; align-items: center; gap: 8px; }
   .pastille { width: 10px; height: 10px; border-radius: 50%; background: #666; flex: none; }
   .pastille.on { background: #27ae60; }
+  #selSource { background: #16262f; color: #fff; border: 1px solid #294551; border-radius: 8px; padding: 5px 8px; font-size: 13px; font-family: inherit; }
 
   .zone { flex: 1; position: relative; min-height: 0; background: #0d1219; border: 2px solid #294551; border-radius: 16px; overflow: hidden; }
   .zone .titre { position: absolute; top: 0; left: 0; right: 0; z-index: 2;
@@ -34,6 +35,9 @@
 
 <header>
   <h1>Visionneuse CAO &mdash; ecran spectateur</h1>
+  <label id="blocSource" style="display:none; font-size:13px; color:#93aab7;">Casque suivi :
+    <select id="selSource"></select>
+  </label>
   <div class="etat"><span class="pastille" id="pastille"></span><span id="etatTxt">Connexion...</span></div>
 </header>
 
@@ -147,6 +151,7 @@
   var racineSpectateur = null;
   var pieces = [];         // meshes coloriables, meme ordre que chargerModele()
   var piecesMobiles = [];  // pieces de haut niveau, meme ordre que chargerModele()
+  var piecesFines = [];    // pieces individuelles (outil Dissocier), meme regle/ordre que app.js : ids 'f0', 'f1'...
   var fichierCharge = null;
   var chargementEnCours = false;
 
@@ -162,7 +167,7 @@
 
   function viderModele() {
     if (racineSpectateur) { groupeModele.remove(racineSpectateur); }
-    racineSpectateur = null; pieces = []; piecesMobiles = [];
+    racineSpectateur = null; pieces = []; piecesMobiles = []; piecesFines = [];
     groupeModele.position.set(0, 0, 0); groupeModele.quaternion.identity(); groupeModele.scale.set(1, 1, 1);
     attenteCentrage = true;
     if (laserLigne) laserLigne.visible = false;
@@ -199,6 +204,14 @@
       var carRacine = root;
       while (carRacine.children.length === 1) carRacine = carRacine.children[0];
       piecesMobiles = carRacine.children.slice();
+      // Meme regle que pieceFineDe() de app.js : le noeud qui porte un seul
+      // mesh (groupe d'une piece STEP), sinon le mesh lui-meme.
+      piecesFines = [];
+      pieces.forEach(function (m) {
+        var p = m.parent;
+        var f = (p && p !== root && p.children.length === 1) ? p : m;
+        if (piecesFines.indexOf(f) === -1) piecesFines.push(f);
+      });
 
       racineSpectateur = root;
       groupeModele.add(root);
@@ -233,7 +246,7 @@
       if (attenteCentrage) { recentrerCamera(); attenteCentrage = false; }
       return;
     }
-    var piece = piecesMobiles[id];
+    var piece = (typeof id === 'string' && id.charAt(0) === 'f') ? piecesFines[parseInt(id.slice(1), 10)] : piecesMobiles[id];
     if (!piece) return;
     // Recue relative au MODELE (racineSpectateur), pas a l'ancre : on la
     // recompose avec la position ACTUELLE (fraiche) du modele entier.
@@ -249,7 +262,11 @@
   function appliquerListeTransforms(idArray, matArray) {
     var idxM = idArray.indexOf('m');
     if (idxM !== -1) appliquerTransform('m', matArray[idxM]);
-    idArray.forEach(function (id, i) { if (id !== 'm') appliquerTransform(id, matArray[i]); });
+    var estFine = function (id) { return typeof id === 'string' && id.charAt(0) === 'f'; };
+    // Pieces de 1er niveau d'abord, pieces dissociees ensuite (leur parent
+    // doit deja etre a jour : elles sont recomposees a partir de lui).
+    idArray.forEach(function (id, i) { if (id !== 'm' && !estFine(id)) appliquerTransform(id, matArray[i]); });
+    idArray.forEach(function (id, i) { if (estFine(id)) appliquerTransform(id, matArray[i]); });
   }
 
   function appliquerCouleur(pi, mi, hex) {
@@ -344,16 +361,71 @@
   }
 
   // ============================ SOURCE ACTIVE ============================
-  // Un seul modele affiche a la fois : celui de la source (sid) la plus
-  // recemment active. Pas de galerie multi-sources (scenario a 2 personnes) -
-  // le sid reste dans chaque message pour une extension future eventuelle.
+  // Un seul modele affiche a la fois, VERROUILLE sur une source (sid) : la
+  // premiere vue, ou celle choisie dans la liste "Casque suivi". Avant, chaque
+  // message de presence de N'IMPORTE QUEL casque faisait basculer l'ecran sur
+  // lui - avec plusieurs casques sur des modeles differents, ca sautait en
+  // permanente de l'un a l'autre. On ne lache la source suivie que si elle
+  // se tait plus de TIMEOUT_VERROU (casque eteint) - sinon la liste permet
+  // de changer a la main.
+  var TIMEOUT_VERROU = 30000;
+  var TIMEOUT_LISTE = 15000;   // une source vue il y a moins de ca est "en direct" dans la liste
   var sidActif = null;
   var dernierMessage = 0;
+  var sources = {};            // sid -> { num, nom, modele, vu }
+  var nbSourcesVues = 0;
   var elTitre = document.getElementById('titre');
   var elRien = document.getElementById('rien');
   var elCanvas = document.getElementById('vue3d');
+  var elBlocSource = document.getElementById('blocSource');
+  var elSelSource = document.getElementById('selSource');
 
   function estActif() { return sidActif && (Date.now() - dernierMessage < TIMEOUT); }
+
+  function noterSource(p) {
+    var s = sources[p.sid];
+    if (!s) { s = sources[p.sid] = { num: ++nbSourcesVues, nom: '', modele: '', vu: 0 }; }
+    if (p.nom) s.nom = p.nom;
+    if (p.modele) s.modele = p.modele;
+    s.vu = Date.now();
+    majSelecteur();
+  }
+  // Une autre source ne peut prendre la main que s'il n'y en a pas encore de
+  // suivie, ou si la suivie est silencieuse depuis longtemps.
+  function accepteSource(sid) {
+    return !sidActif || sid === sidActif || (Date.now() - dernierMessage > TIMEOUT_VERROU);
+  }
+  function libelleSource(sid) {
+    var s = sources[sid];
+    return 'Casque ' + s.num + (s.nom ? ' - ' + s.nom : '');
+  }
+  var _signatureListe = '';
+  function majSelecteur() {
+    var maintenant = Date.now();
+    var actives = Object.keys(sources).filter(function (sid) {
+      return sid === sidActif || (maintenant - sources[sid].vu < TIMEOUT_LISTE);
+    }).sort(function (a, b) { return sources[a].num - sources[b].num; });
+    elBlocSource.style.display = actives.length >= 2 ? '' : 'none';
+    // Ne reconstruit la liste que si elle a change (reconstruire pendant
+    // qu'elle est ouverte la refermerait).
+    var signature = actives.map(function (sid) { return sid + '|' + libelleSource(sid); }).join(';');
+    if (signature !== _signatureListe) {
+      _signatureListe = signature;
+      elSelSource.innerHTML = '';
+      actives.forEach(function (sid) {
+        var o = document.createElement('option');
+        o.value = sid; o.textContent = libelleSource(sid);
+        elSelSource.appendChild(o);
+      });
+    }
+    if (sidActif) elSelSource.value = sidActif;
+  }
+  elSelSource.addEventListener('change', function () {
+    var sid = elSelSource.value, s = sources[sid];
+    if (!s || sid === sidActif) return;
+    attenteCentrage = true;
+    prendreSource(sid, s.modele, s.nom);
+  });
 
   function majAffichage(nom) {
     if (estActif()) {
@@ -373,13 +445,15 @@
   function prendreSource(sid, fichier, nom) {
     var changeDeSource = sid !== sidActif;
     sidActif = sid; dernierMessage = Date.now();
+    if (changeDeSource) { eteindreLaser(); avatarTete.visible = false; }
     if (changeDeSource || fichier !== fichierCharge) {
       chargerModeleSpectateur(fichier, function () { demanderEtat(); });
     }
     majAffichage(nom);
+    majSelecteur();
   }
 
-  setInterval(function () { majAffichage(); }, 1000);
+  setInterval(function () { majAffichage(); majSelecteur(); }, 1000);
 
   // ============================ CONNEXION SUPABASE ============================
   var elPast = document.getElementById('pastille');
@@ -398,10 +472,14 @@
 
       canal.on('broadcast', { event: 'pres' }, function (m) {
         var p = m.payload || {}; if (!p.sid) return;
+        noterSource(p);
+        if (!accepteSource(p.sid)) return;   // autre casque : on reste fige sur celui suivi
         prendreSource(p.sid, p.modele, p.nom);
       });
       canal.on('broadcast', { event: 'snap' }, function (m) {
         var p = m.payload || {}; if (!p.sid) return;
+        noterSource(p);
+        if (!accepteSource(p.sid)) return;
         prendreSourceEtAppliquerSnap(p);
       });
       canal.on('broadcast', { event: 'action' }, function (m) {
