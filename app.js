@@ -95,7 +95,9 @@ function configDriveValide(cle) {
 // il ne restait que le modele local, sans aucun indice - on affiche donc une
 // petite note sous la liste (la liste locale reste disponible quoi qu'il arrive).
 var noteDriveEl = document.createElement('div');
-noteDriveEl.style.cssText = 'font-size:.75rem;color:var(--muted);line-height:1.4;';
+// width:0 + min-width:100% : la note prend la largeur du panneau sans
+// l'elargir (sinon un long message d'erreur ferait gonfler la colonne).
+noteDriveEl.style.cssText = 'font-size:.75rem;color:var(--muted);line-height:1.4;width:0;min-width:100%;';
 listeModelesEl.parentNode.appendChild(noteDriveEl);
 function chargerListeDrive() {
   if (!configDriveValide('apiKey') || !configDriveValide('folderId')) return Promise.resolve();

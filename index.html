@@ -69,7 +69,7 @@
 
     .zone-accueil{
       display: flex; flex-direction: row; align-items: center; justify-content: center;
-      gap: 20px; width: 100%; max-width: 700px;
+      gap: 20px; width: 100%; max-width: 980px;
     }
     @media (max-width: 760px){
       .zone-accueil{ flex-direction: column; align-items: center; }
@@ -78,7 +78,9 @@
     .panel-modeles{
       background: var(--surface); border: 1px solid var(--border); border-radius: 20px;
       box-shadow: var(--shadow);
-      padding: 24px 22px; width: 100%; max-width: 260px; box-sizing: border-box;
+      /* Colonne elargie : chaque titre de modele tient sur UNE ligne (largeur
+         selon le plus long titre, plafonnee). */
+      padding: 24px 22px; width: max-content; min-width: 260px; max-width: min(520px, 100%); box-sizing: border-box;
       display: flex; flex-direction: column; gap: 12px;
     }
     .panel-modeles h2{ font-size: .95rem; font-weight: 800; margin: 0; }
@@ -88,7 +90,7 @@
     .liste-modeles-panel button{
       display: block; width: 100%; text-align: left; padding: 10px 12px; font-size: .88rem; font-family: inherit;
       border: 1.5px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text);
-      cursor: pointer; box-sizing: border-box;
+      cursor: pointer; box-sizing: border-box; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .liste-modeles-panel button:hover{ border-color: var(--primary); }
     .liste-modeles-panel button.actif{ background: var(--primary); border-color: var(--primary); color: #fff; }
@@ -196,7 +198,7 @@
       </aside>
     </div>
 
-    <div id="version">v1.26.0</div>
+    <div id="version">v1.26.1</div>
   </div>
   <canvas id="c"></canvas>
 
@@ -295,6 +297,6 @@
   <!-- Diffusion vers l'ecran spectateur (local : le reseau du Quest bloque les CDN) -->
   <script src="supabase.min.js"></script>
   <script src="supabase-config.js?v=1.16.1"></script>
-  <script src="app.js?v=1.26.0"></script>
+  <script src="app.js?v=1.26.1"></script>
 </body>
 </html>
