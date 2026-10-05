@@ -219,8 +219,10 @@
       // mesh (groupe d'une piece STEP), sinon le mesh lui-meme.
       piecesFines = [];
       pieces.forEach(function (m) {
-        var p = m.parent;
-        var f = (p && p !== root && p.children.length === 1) ? p : m;
+        // Meme regle que pieceFineDe() de app.js (groupe de meshes seuls = 1 piece).
+        var f = m, par = m.parent;
+        if (par && par !== root && par.children.length <= 12 && par.children.every(function (c) { return c.isMesh; })) f = par;
+        while (f.parent && f.parent !== root && f.parent.children.length === 1) f = f.parent;
         if (piecesFines.indexOf(f) === -1) piecesFines.push(f);
       });
 

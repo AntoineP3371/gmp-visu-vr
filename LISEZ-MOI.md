@@ -1,4 +1,4 @@
-# Visionneuse CAO en réalité mixte — v1.23.0
+# Visionneuse CAO en réalité mixte — v1.24.0
 
 Application WebXR pour Meta Quest 3 : pose n'importe quel modèle 3D (issu
 d'une modélisation 3DEXPERIENCE) sur une vraie table, manipule-le à main
@@ -76,7 +76,7 @@ gâchette.
 | Remettre UN axe à zéro | Vise le petit bouton rouge **« RAZ »** (superposé, en léger premier plan, sur le coin de la case de valeur), **gâchette** |
 | **RAZ générale** (menu Déplacements) | Remet le modèle ENTIER à sa position d'origine, **y compris les pièces déjà déplacées individuellement ou en groupe** |
 | Déplacer le centre de rotation | Vise un point du modèle (hors flèche/anneau), **gâchette** |
-| Colorer une pièce (menu Couleurs > Manuel) | Choisis une couleur dans la palette (roue, affichée directement), puis vise la pièce et appuie sur la **gâchette** |
+| Colorer une pièce (menu Couleurs > Manuel) | Choisis une couleur dans la palette (roue, affichée directement), puis vise la pièce et appuie sur la **gâchette** - **la pièce entière** prend la couleur (toutes ses surfaces, même si elle en comporte plusieurs), et toute la pièce visée se surligne avant le clic |
 | **Mesurer une distance** (menu Mesures) | Vise un 1er point puis un 2e avec la **gâchette** : ligne + distance réelle en mm affichées (indépendant du zoom en cours) - chaque mesure est gardée dans l'historique et **suit le modèle** (et chaque pièce déplacée indépendamment) si tu le bouges ensuite |
 | **Revoir une mesure déjà prise** | Menu Mesures : la liste affiche toutes les mesures (une seule à l'écran à la fois), clique sur une entrée pour la rappeler |
 | **Effacer une mesure** | Vise la petite croix rouge en haut à droite de sa case, **gâchette** - la retire de l'historique |

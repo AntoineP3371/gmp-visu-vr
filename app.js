@@ -628,9 +628,23 @@ function revenirLibre() {
 //  doivent rester alignes entre emetteur et recepteur.
 // ============================================================================
 var piecesFines = [];
+// Une piece peut comporter PLUSIEURS meshes (un par couleur/matiere quand le
+// STEP a des faces de couleurs differentes) : un groupe qui ne contient que
+// des meshes (au plus MAX_MESHES_PIECE, sinon c'est plutot un assemblage a
+// plat) est donc UNE piece, et on remonte ensuite les groupes d'emballage a
+// enfant unique. Recopie fidele dans spectateur.html (indices alignes).
+var MAX_MESHES_PIECE = 12;
 function pieceFineDe(mesh) {
-  var p = mesh.parent;
-  return (p && p !== racineModele && p.children.length === 1) ? p : mesh;
+  var p = mesh, par = mesh.parent;
+  if (par && par !== racineModele && par.children.length <= MAX_MESHES_PIECE &&
+      par.children.every(function (c) { return c.isMesh; })) p = par;
+  while (p.parent && p.parent !== racineModele && p.parent.children.length === 1) p = p.parent;
+  return p;
+}
+function meshesDePiece(f) {
+  var out = [];
+  f.traverse(function (o) { if (o.isMesh) out.push(o); });
+  return out;
 }
 // Une piece de 1er niveau (piecesMobiles) peut avoir change de parent (selection
 // A+gachette -> pivotSelection/pivot) : sa place "locale" n'est alors plus
@@ -1452,38 +1466,43 @@ var PALETTE = [
 var couleurIdx = 2;
 function couleurCourante() { return PALETTE[couleurIdx]; }
 
+// Colore la PIECE ENTIERE visee (tous ses meshes et toutes leurs matieres) -
+// avant, seul le mesh/la matiere touche changeait, d'ou un retour "les couleurs
+// ne s'affichent que sur certaines surfaces" sur les pieces a plusieurs
+// meshes (une piece STEP a faces de couleurs differentes en comporte
+// plusieurs).
 function remplirPiece(inter) {
   var o = inter.object;
   if (!o.isMesh) return;
-  var mat, matIdx;
-  if (Array.isArray(o.material)) {
-    matIdx = (inter.face && inter.face.materialIndex) || 0;
-    if (!o.material[matIdx]) return;
-    mat = o.material[matIdx];
-  } else {
-    matIdx = 0;
-    mat = o.material;
-  }
-  var avant = mat.color.getHex();
-  var apres = couleurCourante();
-  if (avant === apres) return;
-  mat.color.setHex(apres);
-  enregistrer({ type: 'couleur', mat: mat, avant: avant, apres: apres, pieceIdx: pieces.indexOf(o), matIdx: matIdx });
+  var apres = couleurCourante(), entrees = [];
+  meshesDePiece(pieceFineDe(o)).forEach(function (m) {
+    var pieceIdx = pieces.indexOf(m);
+    var mats = Array.isArray(m.material) ? m.material : [m.material];
+    mats.forEach(function (mat, matIdx) {
+      var avant = mat.color.getHex();
+      if (avant === apres) return;
+      mat.color.setHex(apres);
+      entrees.push({ mat: mat, avant: avant, apres: apres, pieceIdx: pieceIdx, matIdx: matIdx });
+    });
+  });
+  if (entrees.length) enregistrer({ type: 'couleur-lot', entrees: entrees });
 }
 
+// Une teinte par PIECE (pas par mesh) : toutes les surfaces d'une meme piece
+// prennent la meme couleur.
 function colorierAutomatiquement() {
-  var total = 0;
-  pieces.forEach(function (o) { total += Array.isArray(o.material) ? o.material.length : 1; });
-  var i = 0, entrees = [];
-  pieces.forEach(function (o) {
-    var pieceIdx = pieces.indexOf(o);
-    var mats = Array.isArray(o.material) ? o.material : [o.material];
-    mats.forEach(function (m, matIdx) {
-      var avant = m.color.getHex();
-      var apres = new THREE.Color().setHSL(i / Math.max(total, 1), 0.65, 0.55).getHex();
-      m.color.setHex(apres);
-      entrees.push({ mat: m, avant: avant, apres: apres, pieceIdx: pieceIdx, matIdx: matIdx });
-      i++;
+  var groupes = piecesFines.length ? piecesFines : pieces;
+  var entrees = [];
+  groupes.forEach(function (f, gi) {
+    var apres = new THREE.Color().setHSL(gi / Math.max(groupes.length, 1), 0.65, 0.55).getHex();
+    meshesDePiece(f).forEach(function (m) {
+      var pieceIdx = pieces.indexOf(m);
+      var mats = Array.isArray(m.material) ? m.material : [m.material];
+      mats.forEach(function (mat, matIdx) {
+        var avant = mat.color.getHex();
+        mat.color.setHex(apres);
+        entrees.push({ mat: mat, avant: avant, apres: apres, pieceIdx: pieceIdx, matIdx: matIdx });
+      });
     });
   });
   if (entrees.length) enregistrer({ type: 'couleur-lot', entrees: entrees });
@@ -2866,20 +2885,27 @@ var ECHELLE_SURVOL = 1.3;
 // Ignoree si ce mesh appartient a une piece deja selectionnee (A+gachette),
 // dont la teinte ambre de selection ne doit pas etre ecrasee.
 function appliquerSurvolPiece(idx, mesh) {
+  // La surbrillance couvre la PIECE ENTIERE (tous ses meshes), pas seulement
+  // le mesh vise : on voit ainsi jusqu'ou ira la couleur/la saisie.
   var precedent = pieceSurvolee[idx];
   if (precedent && precedent !== mesh) {
     var autreIdx = 1 - idx;
-    var encoreVise = pieceSurvolee[autreIdx] === precedent;
+    var fPrec = pieceFineDe(precedent);
+    var encoreVise = pieceSurvolee[autreIdx] && pieceFineDe(pieceSurvolee[autreIdx]) === fPrec;
     var estSelectionne = selection.indexOf(trouverPieceRacine(precedent)) !== -1;
     if (!encoreVise && !estSelectionne) {
-      var matsPrec = Array.isArray(precedent.material) ? precedent.material : [precedent.material];
-      matsPrec.forEach(function (m) { if (m.emissive) m.emissive.setHex(0x000000); });
+      meshesDePiece(fPrec).forEach(function (mm) {
+        var matsPrec = Array.isArray(mm.material) ? mm.material : [mm.material];
+        matsPrec.forEach(function (m) { if (m.emissive) m.emissive.setHex(0x000000); });
+      });
     }
   }
   pieceSurvolee[idx] = mesh;
   if (mesh && selection.indexOf(trouverPieceRacine(mesh)) === -1) {
-    var mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    mats.forEach(function (m) { if (m.emissive) m.emissive.setHex(0x2255aa); });
+    meshesDePiece(pieceFineDe(mesh)).forEach(function (mm) {
+      var mats = Array.isArray(mm.material) ? mm.material : [mm.material];
+      mats.forEach(function (m) { if (m.emissive) m.emissive.setHex(0x2255aa); });
+    });
   }
 }
 
